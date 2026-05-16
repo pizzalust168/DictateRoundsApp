@@ -1,0 +1,784 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>DictateRounds</title>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+<style>
+  :root {
+    --bg: #0a0f1a;
+    --surface: #111827;
+    --surface-hover: #1a2332;
+    --border: #1e293b;
+    --text: #e2e8f0;
+    --text-muted: #64748b;
+    --accent: #3b82f6;
+    --accent-dim: #1e3a5f;
+    --red: #ef4444;
+    --red-dim: #3b1111;
+    --green: #22c55e;
+    --green-dim: #11301b;
+    --amber: #f59e0b;
+    --amber-dim: #302211;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: 'IBM Plex Sans', -apple-system, BlinkMacSystemFont, sans-serif; background: var(--bg); color: var(--text); min-height: 100vh; }
+  #app { max-width: 720px; margin: 0 auto; padding: 0 16px 80px; }
+  .header { display: flex; align-items: center; justify-content: space-between; padding: 20px 0 16px; border-bottom: 1px solid var(--border); margin-bottom: 20px; }
+  .logo { font-size: 20px; font-weight: 700; letter-spacing: -0.5px; }
+  .logo-accent { color: var(--accent); font-weight: 400; }
+  .header-actions { display: flex; gap: 8px; align-items: center; }
+  .btn { padding: 10px 20px; border-radius: 8px; border: none; cursor: pointer; font-size: 14px; font-weight: 600; font-family: inherit; transition: all 0.15s; display: inline-flex; align-items: center; gap: 8px; }
+  .btn:hover { filter: brightness(1.1); }
+  .btn:disabled { opacity: 0.4; cursor: not-allowed; filter: none; }
+  .btn-primary { background: var(--accent); color: #fff; }
+  .btn-green { background: var(--green); color: #fff; }
+  .btn-ghost { background: transparent; border: 1px solid var(--border); color: var(--text-muted); }
+  .btn-recording { background: var(--red); color: #fff; animation: pulse 1.5s infinite; }
+  .btn-copy { background: var(--accent-dim); color: var(--accent); }
+  .btn-sm { padding: 6px 12px; font-size: 12px; }
+  .btn-full { width: 100%; justify-content: center; }
+  .icon-btn { background: none; border: 1px solid var(--border); color: var(--text-muted); border-radius: 8px; padding: 8px 12px; cursor: pointer; font-size: 14px; font-family: inherit; transition: all 0.15s; }
+  .icon-btn:hover { border-color: var(--accent); color: var(--text); }
+  .card { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 16px; margin-bottom: 10px; transition: all 0.15s; }
+  .card-clickable { cursor: pointer; }
+  .card-clickable:hover { border-color: var(--accent); }
+  .card-recording { border-color: var(--red) !important; }
+  .card-processed { border-color: rgba(34,197,94,0.25); }
+  .badge { display: inline-flex; align-items: center; gap: 4px; padding: 3px 10px; border-radius: 20px; font-size: 11px; font-weight: 600; letter-spacing: 0.3px; text-transform: uppercase; }
+  .badge-amber { background: var(--amber-dim); color: var(--amber); }
+  .badge-green { background: var(--green-dim); color: var(--green); }
+  .badge-red { background: var(--red-dim); color: var(--red); }
+  .progress-track { height: 3px; background: var(--border); border-radius: 2px; margin-top: 10px; }
+  .note-block { background: var(--bg); border: 1px solid var(--border); border-radius: 8px; padding: 14px; font-size: 13px; line-height: 1.6; white-space: pre-wrap; font-family: 'IBM Plex Mono', monospace; margin-top: 12px; max-height: 300px; overflow-y: auto; }
+  .input { width: 100%; padding: 10px 14px; background: var(--bg); border: 1px solid var(--border); border-radius: 8px; color: var(--text); font-size: 14px; font-family: 'IBM Plex Mono', monospace; outline: none; }
+  .input:focus { border-color: var(--accent); }
+  .input-label { font-size: 13px; color: var(--text-muted); display: block; margin-bottom: 6px; }
+  .input-hint { font-size: 11px; color: var(--text-muted); margin-top: 4px; }
+  .toast { position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%); background: var(--surface); border: 1px solid var(--border); color: var(--text); padding: 10px 20px; border-radius: 10px; font-size: 13px; font-weight: 500; z-index: 1000; box-shadow: 0 8px 32px rgba(0,0,0,0.4); animation: fadeIn 0.2s; }
+  .dropzone { border: 2px dashed var(--border); border-radius: 12px; padding: 40px 20px; text-align: center; cursor: pointer; transition: all 0.2s; }
+  .dropzone:hover, .dropzone.drag-over { border-color: var(--accent); background: rgba(59,130,246,0.05); }
+  .dropzone-icon { font-size: 36px; margin-bottom: 12px; }
+  .dropzone-text { font-size: 14px; color: var(--text-muted); }
+  .dropzone-text strong { color: var(--accent); }
+  details summary { font-size: 12px; color: var(--text-muted); cursor: pointer; margin-top: 8px; }
+  .sep { margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--border); }
+  .patient-name { font-size: 15px; font-weight: 600; }
+  .patient-bed { font-size: 11px; color: var(--text-muted); background: var(--bg); padding: 2px 8px; border-radius: 4px; margin-left: 8px; }
+  .patient-task { font-size: 12px; color: var(--amber); margin-top: 4px; font-weight: 500; }
+  .patient-followup { font-size: 12px; color: var(--text-muted); margin-top: 2px; }
+  .controls { display: flex; gap: 8px; flex-wrap: wrap; }
+  .fac-name { font-size: 16px; font-weight: 600; margin-bottom: 4px; }
+  .fac-count { font-size: 13px; color: var(--text-muted); }
+  .stat-label { font-size: 14px; color: var(--text-muted); margin-bottom: 4px; }
+  .stat-value { font-size: 28px; font-weight: 700; letter-spacing: -1px; }
+  .stat-sub { font-size: 13px; color: var(--text-muted); margin-top: 4px; }
+  .fac-select-item { background: var(--surface); border: 2px solid var(--border); border-radius: 12px; padding: 14px 16px; margin-bottom: 8px; cursor: pointer; transition: all 0.15s; display: flex; align-items: center; gap: 14px; }
+  .fac-select-item:hover { border-color: var(--text-muted); }
+  .fac-select-item.selected { border-color: var(--accent); background: rgba(59,130,246,0.06); }
+  .fac-checkbox { width: 22px; height: 22px; border-radius: 6px; border: 2px solid var(--border); display: flex; align-items: center; justify-content: center; flex-shrink: 0; transition: all 0.15s; font-size: 13px; color: transparent; }
+  .fac-select-item.selected .fac-checkbox { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .fac-select-info { flex: 1; }
+  .fac-select-name { font-size: 15px; font-weight: 600; }
+  .fac-select-count { font-size: 12px; color: var(--text-muted); margin-top: 2px; }
+  .fac-select-tasks { font-size: 11px; color: var(--amber); margin-top: 2px; }
+  .settings-section { margin-bottom: 24px; }
+  .settings-box { padding: 16px; background: var(--surface); border-radius: 12px; border: 1px solid var(--border); }
+  .settings-title { font-size: 14px; font-weight: 600; margin-bottom: 8px; }
+  .settings-desc { font-size: 12px; color: var(--text-muted); line-height: 1.6; }
+  .keyterms-input { width: 100%; padding: 10px 14px; background: var(--bg); border: 1px solid var(--border); border-radius: 8px; color: var(--text); font-size: 12px; font-family: 'IBM Plex Mono', monospace; outline: none; min-height: 80px; resize: vertical; }
+  @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.7; } }
+  @keyframes fadeIn { from { opacity: 0; transform: translateX(-50%) translateY(10px); } to { opacity: 1; transform: translateX(-50%) translateY(0); } }
+  ::-webkit-scrollbar { width: 4px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
+</style>
+</head>
+<body>
+<div id="app">
+  <div class="header">
+    <div class="logo">Dictate<span class="logo-accent">Rounds</span></div>
+    <div class="header-actions">
+      <span id="processingIndicator" style="font-size:12px;color:var(--amber);display:none;"></span>
+      <button class="icon-btn" onclick="showView('settings')">&#9881;</button>
+    </div>
+  </div>
+
+  <!-- IMPORT VIEW -->
+  <div id="view-import">
+    <div style="margin-bottom:24px">
+      <div class="stat-label">Get Started</div>
+      <div class="stat-value">Import Patient List</div>
+      <div class="stat-sub">Drop your Patient Master List to begin</div>
+    </div>
+    <div class="dropzone" onclick="document.getElementById('fileInput').click()"
+         ondragover="event.preventDefault();this.classList.add('drag-over')"
+         ondragleave="this.classList.remove('drag-over')"
+         ondrop="handleDrop(event)">
+      <div class="dropzone-icon">&#128203;</div>
+      <div class="dropzone-text"><strong>Drop your Patient Master List here</strong><br>or click to browse (.xlsx)</div>
+    </div>
+    <input type="file" id="fileInput" accept=".xlsx,.xls" style="display:none" onchange="handleFileSelect(event)">
+  </div>
+
+  <!-- FACILITY SELECTOR VIEW -->
+  <div id="view-select" style="display:none">
+    <div style="margin-bottom:20px">
+      <div class="stat-label">Step 1</div>
+      <div class="stat-value">Select Today's Facilities</div>
+      <div class="stat-sub" id="selectSummary"></div>
+    </div>
+    <div id="facilitySelector"></div>
+    <div style="margin-top:20px">
+      <button class="btn btn-primary btn-full" id="startRoundBtn" disabled onclick="startRound()">Select facilities to begin</button>
+    </div>
+    <div style="display:flex;gap:8px;margin-top:12px">
+      <button class="btn btn-ghost btn-sm" onclick="document.getElementById('fileInput2').click()">&#128203; Re-import list</button>
+      <input type="file" id="fileInput2" accept=".xlsx,.xls" style="display:none" onchange="handleFileSelect(event)">
+    </div>
+  </div>
+
+  <!-- HOME / ROUND VIEW -->
+  <div id="view-home" style="display:none">
+    <div style="margin-bottom:24px">
+      <div class="stat-label">Today's Round</div>
+      <div class="stat-value" id="homePatientCount"></div>
+      <div class="stat-sub" id="homeSummary"></div>
+    </div>
+    <div style="display:flex;gap:8px;margin-bottom:16px;flex-wrap:wrap">
+      <button class="btn btn-ghost btn-sm" onclick="backToSelect()">&larr; Change Facilities</button>
+      <button class="btn btn-green btn-sm" id="processAllBtn" style="display:none" onclick="batchProcess()">&#9889; Process (<span id="pendingCount">0</span>)</button>
+      <button class="btn btn-sm" id="retryFailedBtn" style="display:none;background:var(--red-dim);color:var(--red)" onclick="batchProcess(true)">&#8635; Retry Failed (<span id="failedCount">0</span>)</button>
+      <button class="btn btn-primary btn-sm" id="reviewNotesBtn" style="display:none" onclick="showView('review')">&#128203; Review Notes (<span id="processedCount">0</span>)</button>
+      <button class="btn btn-ghost btn-sm" id="exportAudioBtn" style="display:none" onclick="exportAllAudio()">&#128229; Export Audio</button>
+      <button class="btn btn-ghost btn-sm" id="clearDayBtn" style="display:none" onclick="clearDay()">Clear Day</button>
+    </div>
+    <div id="facilityList"></div>
+  </div>
+
+  <!-- FACILITY DETAIL VIEW -->
+  <div id="view-facility" style="display:none">
+    <button class="icon-btn" onclick="showView('home')" style="margin-bottom:16px">&larr; Back</button>
+    <div style="font-size:22px;font-weight:700;letter-spacing:-0.5px;margin-bottom:4px" id="facTitle"></div>
+    <div class="stat-sub" id="facSummary" style="margin-bottom:12px"></div>
+    <div style="position:sticky;top:0;z-index:10;background:var(--bg);padding:8px 0 12px">
+      <input class="input" type="text" placeholder="Search patients..." id="patientSearch" oninput="searchQuery=this.value;renderFacility()" style="font-family:'IBM Plex Sans',sans-serif;font-size:14px">
+    </div>
+    <div id="patientList"></div>
+  </div>
+
+  <!-- REVIEW PROCESSED NOTES VIEW -->
+  <div id="view-review" style="display:none">
+    <div style="display:flex;gap:8px;margin-bottom:16px;flex-wrap:wrap">
+      <button class="icon-btn" onclick="showView('home')">&larr; Back to Round</button>
+      <button class="btn btn-sm" id="retryFailedReviewBtn" style="display:none;background:var(--red-dim);color:var(--red)" onclick="batchProcess(true)">&#8635; Retry Failed (<span id="failedCountReview">0</span>)</button>
+    </div>
+    <div style="margin-bottom:20px">
+      <div class="stat-label">Processed Notes</div>
+      <div class="stat-value" id="reviewCount"></div>
+      <div class="stat-sub" id="reviewSummary"></div>
+    </div>
+    <div id="reviewList"></div>
+  </div>
+
+  <!-- SETTINGS VIEW -->
+  <div id="view-settings" style="display:none">
+    <button class="icon-btn" onclick="goBackFromSettings()" style="margin-bottom:16px">&larr; Back</button>
+    <div style="font-size:22px;font-weight:700;margin-bottom:20px">Settings</div>
+    <div class="settings-section">
+      <label class="input-label">Deepgram API Key (for transcription)</label>
+      <input class="input" type="password" placeholder="your deepgram api key" id="deepgramKey" onchange="localStorage.setItem('dr_deepgramKey',this.value)">
+      <div class="input-hint">Used for Nova-3 Medical speech-to-text. Free $200 credit at deepgram.com</div>
+    </div>
+    <div class="settings-section">
+      <label class="input-label">Anthropic API Key (for note structuring)</label>
+      <input class="input" type="password" placeholder="sk-ant-..." id="anthropicKey" onchange="localStorage.setItem('dr_anthropicKey',this.value)">
+      <div class="input-hint">Used for Claude Sonnet post-processing of transcripts</div>
+    </div>
+    <div class="settings-section">
+      <label class="input-label">Deepgram Keyterm Prompts (one per line)</label>
+      <textarea class="keyterms-input" id="keytermsInput" placeholder="RMMR&#10;RACF&#10;bisoprolol&#10;polypharmacy&#10;PIP QI" onchange="localStorage.setItem('dr_keyterms',this.value)"></textarea>
+      <div class="input-hint">Medical terms Deepgram should prioritise. Up to 100 terms supported.</div>
+    </div>
+    <div class="settings-box">
+      <div class="settings-title">Privacy</div>
+      <div class="settings-desc">Audio recordings are stored locally on your device only. Patient identifiers are never sent to any API. Only de-identified audio transcripts are sent for note structuring. All audio is deleted when you clear the day.</div>
+    </div>
+    <div class="settings-box" style="margin-top:16px">
+      <div class="settings-title">Scribe Prompt</div>
+      <div class="settings-desc" style="margin-bottom:8px">Your SuperWhisper prompt is built in. Editable in future versions.</div>
+      <div class="note-block" style="font-size:11px;max-height:150px" id="promptPreview"></div>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast" style="display:none"></div>
+
+<script>
+const SCRIBE_PROMPT = "ROLE\nYou are a passive AI medical scribe assisting a primary care physician in aged care. Produce a brief, clinically useful note from a transcript.\n\nINPUT\n- Transcript may have ONE speaker (Doctor only) or TWO speakers (Doctor and Patient)\n- Speakers may be labeled (\"Doctor:\", \"Patient:\"). If there is only one speaker or labels are absent, assume ALL lines are from the Doctor.\n- Use only what is explicitly stated AND ENSURE ALL spoken input is included in the output, including all history and any pathology results including numbers. Do not omit any details.\n\nOUTPUT (STRICT FORMAT)\nReturn ONLY the following three headings: \n\nHistory Of Presenting Illness\n\nExamination\n\nPlan\n\nENSURE headings contain Title Case, in this exact order, with concise dash-prefixed items beneath each. Use ONLY dashes \"-\" for list items, NEVER bullet points or any other list marker. Do not add other headings or commentary. DO NOT number the headings.\n\nSTYLE & CONSTRAINTS\n- Be concise: short clinical phrases, one idea per dash item.\n- Use Australian spelling not USA spelling:\n - \"stabilization\" \u2192 \"stabilisation\"\n- Use only information explicitly stated in the transcript. Do not infer or invent.\n- Include relevant negatives only if spoken (e.g., \"no fever\").\n- Convert all spoken/written numbers to numeric characters (cardinals and ordinals):\n  - \"three days\" \u2192 \"3 days\"; \"twenty five\" \u2192 \"25\"; \"fifth\" \u2192 \"5th\"; \"thirty seven point six\" \u2192 \"37.6\".\n  - Preserve units/abbreviations exactly as spoken (mg, mmHg, bpm, L/min, etc.).\n- Vitals/measurements: keep common clinical notation if spoken (e.g., \"120/80\", \"SpO2 96% on RA\").\n- Meds: list name, dose, route, frequency exactly as spoken (convert numbers only).\n- If a section has no explicit content, output a single dash \"-\".\n- Do NOT USE any em dashes\n- Do NOT USE bullet points (\u2022) or asterisks (*) as list markers. Use ONLY dashes \"-\".\n- Ensure ALL spoken input is included, especially in the history component, including any pathology results including numbers\n\nMAPPING LOGIC\n- History of presenting illness: symptoms, onset/duration, context, collateral info if explicitly stated by the Doctor (e.g., \"staff report\u2026\").\n- Examination: objective findings and measurements explicitly stated by the Doctor (or Patient if clearly exam-like).\n- Plan: tests, medications (new/changed/ceased), referrals, non-pharmacological actions, monitoring, follow-up timing, safety-net\u2014ONLY if explicitly stated.\n\nSINGLE-SPEAKER HANDLING (Doctor-only)\n- Treat the entire transcript as the Doctor's dictation.\n- Use cue phrases to map content:\n  - \"on exam\", \"examination\", vitals/measurements \u21d2 Examination\n  - \"plan\", \"we will\", \"start/cease/continue\", \"order\", \"refer\" \u21d2 Plan\n  - All other clinically relevant statements (history, collateral, functional) \u21d2 History of presenting illness\n\nQUALITY CHECK\n- Exactly 3 headings in the specified order.\n- Dash-prefixed concise items only; numbers converted; no extra commentary.\n- No bullet points (\u2022), only dashes (\"-\").\n- No invented findings or plans.\n- Ensure ALL spoken input has been included in output, including any pathology results including numbers";
+
+// ─── State ───
+let allPatients = [];
+let allFacilities = [];
+let selectedFacilities = new Set();
+let todayPatients = [];
+let todayFacilities = [];
+let recordings = {};
+let selectedFacility = null;
+let activeRecording = null;
+let recordingTime = 0;
+let isProcessing = false;
+let expandedPatient = null;
+let mediaRecorder = null;
+let audioChunks = [];
+let recordingTimer = null;
+let currentAudio = null;
+let playingAudioId = null;
+let previousView = 'home';
+let patientNotes = {}; // pid -> string
+let searchQuery = '';
+
+// ─── IndexedDB ───
+function openDB(){return new Promise((s,f)=>{const r=indexedDB.open('DictateRoundsAudio',1);r.onupgradeneeded=()=>r.result.createObjectStore('blobs');r.onsuccess=()=>s(r.result);r.onerror=()=>f(r.error)})}
+async function saveBlob(id,blob){const db=await openDB();return new Promise((s,f)=>{const tx=db.transaction('blobs','readwrite');tx.objectStore('blobs').put(blob,id);tx.oncomplete=()=>s();tx.onerror=()=>f(tx.error)})}
+async function loadBlob(id){const db=await openDB();return new Promise((s,f)=>{const tx=db.transaction('blobs','readonly');const r=tx.objectStore('blobs').get(id);r.onsuccess=()=>s(r.result);r.onerror=()=>f(r.error)})}
+async function deleteBlob(id){const db=await openDB();return new Promise((s,f)=>{const tx=db.transaction('blobs','readwrite');tx.objectStore('blobs').delete(id);tx.oncomplete=()=>s();tx.onerror=()=>f(tx.error)})}
+
+// ─── Utilities ───
+function uid(){return Date.now().toString(36)+Math.random().toString(36).slice(2,7)}
+function fmtTime(s){return Math.floor(s/60)+':'+String(Math.floor(s%60)).padStart(2,'0')}
+function escHtml(s){const d=document.createElement('div');d.textContent=s;return d.innerHTML}
+function showToast(msg){const el=document.getElementById('toast');el.textContent=msg;el.style.display='block';setTimeout(()=>el.style.display='none',2500)}
+function saveState(){localStorage.setItem('dr_recordings',JSON.stringify(recordings));localStorage.setItem('dr_patientNotes',JSON.stringify(patientNotes))}
+function saveTodayState(){localStorage.setItem('dr_selectedFacilities',JSON.stringify([...selectedFacilities]));localStorage.setItem('dr_todayPatients',JSON.stringify(todayPatients))}
+
+function loadState(){
+  try{
+    const r=localStorage.getItem('dr_recordings');if(r)recordings=JSON.parse(r);
+    const pn=localStorage.getItem('dr_patientNotes');if(pn)patientNotes=JSON.parse(pn);
+    const p=localStorage.getItem('dr_allPatients');if(p){allPatients=JSON.parse(p);allFacilities=[...new Set(allPatients.map(x=>x.facility))];}
+    const sf=localStorage.getItem('dr_selectedFacilities');if(sf)selectedFacilities=new Set(JSON.parse(sf));
+    const tp=localStorage.getItem('dr_todayPatients');if(tp){todayPatients=JSON.parse(tp);todayFacilities=[...new Set(todayPatients.map(x=>x.facility))];}
+  }catch(e){}
+}
+
+// ─── Views ───
+const ALL_VIEWS=['import','select','home','facility','review','settings'];
+function showView(name){
+  ALL_VIEWS.forEach(v=>document.getElementById('view-'+v).style.display=v===name?'block':'none');
+  if(name!=='settings')previousView=name;
+  if(name==='select')renderSelect();
+  if(name==='home'){expandedPatient=null;searchQuery='';renderHome();}
+  if(name==='facility')renderFacility();
+  if(name==='review')renderReview();
+  if(name==='settings')renderSettings();
+}
+function goBackFromSettings(){showView(previousView)}
+function getInitialView(){if(allPatients.length===0)return'import';if(todayPatients.length===0)return'select';return'home';}
+
+// ─── Import ───
+function handleDrop(e){e.preventDefault();e.currentTarget.classList.remove('drag-over');if(e.dataTransfer.files[0])importFile(e.dataTransfer.files[0])}
+function handleFileSelect(e){if(e.target.files[0])importFile(e.target.files[0]);e.target.value=''}
+
+function importFile(file){
+  const reader=new FileReader();
+  reader.onload=(e)=>{
+    try{
+      const wb=XLSX.read(e.target.result,{type:'array'});
+      const parsed=[];
+      // Import from first sheet only
+      const ws=wb.Sheets[wb.SheetNames[0]];
+      const rows=XLSX.utils.sheet_to_json(ws,{header:1,defval:''});
+      let currentFacility='';
+      let currentWard='';
+      for(let i=1;i<rows.length;i++){
+        const row=rows[i];
+        const colA=String(row[0]||'').trim();
+        const colB=String(row[1]||'').trim();
+        const name=String(row[16]||'').trim();
+        const dob=String(row[17]||'').trim();
+        const bed=String(row[18]||'').trim();
+        const ct=String(row[14]||'').trim();
+        const ft=String(row[15]||'').trim();
+        // Facility header: long text in col A, no name
+        if(colA&&colA.length>10&&!name){currentFacility=colA.split('\n')[0].trim();currentWard='';continue;}
+        // Ward/location row: text in col B, no name, no col A
+        if(!colA&&colB&&!name){currentWard=colB;continue;}
+        // Patient row: has a name
+        if(name){parsed.push({id:uid(),facility:currentFacility,ward:currentWard,name,dob,bed,currentTasks:ct,followUpTasks:ft});}
+      }
+      parsed.sort((a,b)=>a.name.localeCompare(b.name));
+      allPatients=parsed;allFacilities=[...new Set(parsed.map(x=>x.facility))];
+      localStorage.setItem('dr_allPatients',JSON.stringify(allPatients));
+      selectedFacilities=new Set();todayPatients=[];todayFacilities=[];saveTodayState();
+      showToast('Imported '+parsed.length+' patients across '+allFacilities.length+' facilities');
+      showView('select');
+    }catch(err){showToast('Error: '+err.message)}
+  };
+  reader.readAsArrayBuffer(file);
+}
+
+// ─── Facility Selection ───
+function toggleFacility(fac){
+  if(selectedFacilities.has(fac))selectedFacilities.delete(fac);else selectedFacilities.add(fac);
+  renderSelect();
+}
+
+function startRound(){
+  if(selectedFacilities.size===0)return;
+  todayPatients=allPatients.filter(p=>selectedFacilities.has(p.facility));
+  todayFacilities=[...selectedFacilities];
+  saveTodayState();
+  showToast('Round started: '+todayPatients.length+' patients, '+todayFacilities.length+' facilities');
+  showView('home');
+}
+
+function backToSelect(){showView('select')}
+
+// ─── Recording ───
+let appendMode=false;
+
+async function startRecording(pid,append){
+  appendMode=!!append;
+  try{
+    const stream=await navigator.mediaDevices.getUserMedia({audio:true});
+    mediaRecorder=new MediaRecorder(stream,{mimeType:'audio/webm;codecs=opus'});
+    audioChunks=[];
+    mediaRecorder.ondataavailable=e=>{if(e.data.size>0)audioChunks.push(e.data)};
+    mediaRecorder.onstop=async()=>{
+      stream.getTracks().forEach(t=>t.stop());
+      const newBlob=new Blob(audioChunks,{type:'audio/webm'});
+      let finalBlob=newBlob;
+      let finalDuration=recordingTime;
+      // If appending, concatenate with existing audio
+      if(appendMode&&recordings[pid]?.audioId){
+        try{
+          const existingBlob=await loadBlob(recordings[pid].audioId);
+          if(existingBlob){
+            finalBlob=new Blob([existingBlob,newBlob],{type:'audio/webm'});
+            finalDuration=(recordings[pid].duration||0)+recordingTime;
+          }
+        }catch(e){}
+        try{await deleteBlob(recordings[pid].audioId)}catch(e){}
+      }else{
+        if(recordings[pid]?.audioId)try{await deleteBlob(recordings[pid].audioId)}catch(e){}
+      }
+      const aid='audio_'+pid+'_'+Date.now();
+      await saveBlob(aid,finalBlob);
+      recordings[pid]={...(recordings[pid]||{}),audioId:aid,duration:finalDuration,status:'recorded',note:null,transcript:null};
+      activeRecording=null;recordingTime=0;appendMode=false;clearInterval(recordingTimer);saveState();renderFacility();
+    };
+    mediaRecorder.start(1000);activeRecording=pid;recordingTime=0;
+    recordingTimer=setInterval(()=>{recordingTime++;renderFacility()},1000);
+    renderFacility();
+  }catch(err){showToast('Microphone access denied')}
+}
+function stopRecording(){if(mediaRecorder&&mediaRecorder.state==='recording')mediaRecorder.stop()}
+
+async function deleteRecording(pid){
+  if(recordings[pid]?.audioId)try{await deleteBlob(recordings[pid].audioId)}catch(e){}
+  delete recordings[pid];saveState();renderFacility();
+}
+
+async function playAudio(aid){
+  if(playingAudioId===aid){currentAudio?.pause();playingAudioId=null;renderFacility();return}
+  const blob=await loadBlob(aid);if(!blob)return;
+  if(currentAudio)currentAudio.pause();
+  currentAudio=new Audio(URL.createObjectURL(blob));
+  currentAudio.onended=()=>{playingAudioId=null;renderFacility()};
+  currentAudio.play();playingAudioId=aid;renderFacility();
+}
+
+function copyNote(pid){
+  if(recordings[pid]?.note){
+    // Strip extra blank lines between headings and content
+    const cleaned=recordings[pid].note.replace(/(History Of Presenting Illness|Examination|Plan)\n\n+/g,'$1\n');
+    navigator.clipboard.writeText(cleaned);
+    recordings[pid].status='done';
+    saveState();
+    showToast('Note copied and marked as done');
+    // Re-render whichever view is active
+    if(document.getElementById('view-review').style.display!=='none')renderReview();
+    else if(document.getElementById('view-facility').style.display!=='none')renderFacility();
+    else renderHome();
+  }
+}
+
+// ─── Batch Process (parallel, 3 concurrent) ───
+async function processOne(pid,rec,dgKey,anKey,kt){
+  const blob=await loadBlob(rec.audioId);if(!blob)throw new Error('Audio not found');
+  const dgUrl=new URL('https://api.deepgram.com/v1/listen');
+  dgUrl.searchParams.set('model','nova-3-medical');
+  dgUrl.searchParams.set('smart_format','true');
+  dgUrl.searchParams.set('punctuate','true');
+  if(kt.length>0)dgUrl.searchParams.set('keywords',kt.join(','));
+  // Try WebM first (small, fast upload), fall back to WAV on 400 errors
+  let dgR=await fetch(dgUrl.toString(),{method:'POST',headers:{'Authorization':'Token '+dgKey,'Content-Type':'audio/webm'},body:blob});
+  if(dgR.status===400){
+    let wavBlob;
+    try{wavBlob=await webmToWav(blob);}catch(e){throw new Error('Audio conversion failed - recording may be corrupt')}
+    dgR=await fetch(dgUrl.toString(),{method:'POST',headers:{'Authorization':'Token '+dgKey,'Content-Type':'audio/wav'},body:wavBlob});
+  }
+  if(!dgR.ok)throw new Error('Deepgram: '+dgR.status+' '+(await dgR.text()));
+  const dgD=await dgR.json();
+  const transcript=dgD.results?.channels?.[0]?.alternatives?.[0]?.transcript||'';
+  if(!transcript.trim())throw new Error('Empty transcript');
+  const stR=await fetch('https://api.anthropic.com/v1/messages',{method:'POST',headers:{'Content-Type':'application/json','x-api-key':anKey,'anthropic-version':'2023-06-01','anthropic-dangerous-direct-browser-access':'true'},body:JSON.stringify({model:'claude-sonnet-4-20250514',max_tokens:2000,system:SCRIBE_PROMPT,messages:[{role:'user',content:transcript}]})});
+  if(!stR.ok)throw new Error('Anthropic: '+stR.status+' '+(await stR.text()));
+  const stD=await stR.json();
+  return{transcript,note:stD.content?.[0]?.text||'Error: No response'};
+}
+
+async function batchProcess(retryMode){
+  const dgKey=localStorage.getItem('dr_deepgramKey');
+  const anKey=localStorage.getItem('dr_anthropicKey');
+  if(!dgKey||!anKey){showView('settings');showToast('Please set both API keys first');return}
+  const toProc=retryMode
+    ?Object.entries(recordings).filter(([_,r])=>r.status==='error'&&r.audioId)
+    :Object.entries(recordings).filter(([_,r])=>r.status==='recorded'&&r.audioId);
+  if(toProc.length===0){showToast(retryMode?'No failed recordings to retry':'No unprocessed recordings');return}
+  isProcessing=true;
+  const kt=(localStorage.getItem('dr_keyterms')||'').split('\n').filter(t=>t.trim());
+  let successCount=0;let failCount=0;let completed=0;
+  const CONCURRENCY=3;
+  const ind=document.getElementById('processingIndicator');
+  ind.style.display='inline';
+  // Process in batches of CONCURRENCY
+  for(let i=0;i<toProc.length;i+=CONCURRENCY){
+    const batch=toProc.slice(i,i+CONCURRENCY);
+    const promises=batch.map(async([pid,rec])=>{
+      try{
+        const result=await processOne(pid,rec,dgKey,anKey,kt);
+        recordings[pid]={...recordings[pid],note:result.note,transcript:result.transcript,status:'processed'};
+        successCount++;
+      }catch(err){
+        recordings[pid]={...recordings[pid],note:'Error: '+err.message,status:'error'};
+        failCount++;
+      }
+      completed++;
+      ind.textContent=(retryMode?'Retrying ':'Processing ')+completed+'/'+toProc.length+'...';
+      saveState();
+    });
+    await Promise.all(promises);
+  }
+  isProcessing=false;ind.style.display='none';
+  let msg=successCount+' processed';
+  if(failCount>0)msg+=' \u00b7 '+failCount+' failed';
+  showToast(msg);showView('review');
+}
+
+// ─── Clear Day ───
+async function clearDay(){
+  if(!confirm('Clear all recordings and notes? You can re-select facilities after.'))return;
+  for(const[_,rec]of Object.entries(recordings)){if(rec.audioId)try{await deleteBlob(rec.audioId)}catch(e){}}
+  recordings={};expandedPatient=null;todayPatients=[];todayFacilities=[];selectedFacilities=new Set();
+  saveState();saveTodayState();showToast('Day cleared');showView('select');
+}
+
+// ─── WebM to WAV conversion ───
+async function webmToWav(blob){
+  const audioCtx=new (window.AudioContext||window.webkitAudioContext)();
+  const arrayBuf=await blob.arrayBuffer();
+  const audioBuf=await audioCtx.decodeAudioData(arrayBuf);
+  const numChannels=audioBuf.numberOfChannels;
+  const sampleRate=audioBuf.sampleRate;
+  const length=audioBuf.length;
+  const wavBuf=new ArrayBuffer(44+length*numChannels*2);
+  const view=new DataView(wavBuf);
+  // WAV header
+  function writeStr(offset,str){for(let i=0;i<str.length;i++)view.setUint8(offset+i,str.charCodeAt(i));}
+  writeStr(0,'RIFF');
+  view.setUint32(4,36+length*numChannels*2,true);
+  writeStr(8,'WAVE');
+  writeStr(12,'fmt ');
+  view.setUint32(16,16,true);
+  view.setUint16(20,1,true);
+  view.setUint16(22,numChannels,true);
+  view.setUint32(24,sampleRate,true);
+  view.setUint32(28,sampleRate*numChannels*2,true);
+  view.setUint16(32,numChannels*2,true);
+  view.setUint16(34,16,true);
+  writeStr(36,'data');
+  view.setUint32(40,length*numChannels*2,true);
+  // Interleave samples
+  let offset=44;
+  for(let i=0;i<length;i++){
+    for(let ch=0;ch<numChannels;ch++){
+      let sample=audioBuf.getChannelData(ch)[i];
+      sample=Math.max(-1,Math.min(1,sample));
+      view.setInt16(offset,sample<0?sample*0x8000:sample*0x7FFF,true);
+      offset+=2;
+    }
+  }
+  audioCtx.close();
+  return new Blob([wavBuf],{type:'audio/wav'});
+}
+
+// ─── Export All Audio ───
+async function exportAllAudio(){
+  const withAudio=Object.entries(recordings).filter(([_,r])=>r.audioId);
+  if(withAudio.length===0){showToast('No recordings to export');return;}
+  const now=new Date();
+  const dateStr=now.getFullYear()+'-'+String(now.getMonth()+1).padStart(2,'0')+'-'+String(now.getDate()).padStart(2,'0');
+  const timeStr=String(now.getHours()).padStart(2,'0')+String(now.getMinutes()).padStart(2,'0');
+  showToast('Converting to WAV and zipping...');
+  const zip=new JSZip();
+  let count=0;
+  for(const[pid,rec]of withAudio){
+    try{
+      const blob=await loadBlob(rec.audioId);
+      if(!blob)continue;
+      const wavBlob=await webmToWav(blob);
+      const patient=todayPatients.find(p=>p.id===pid)||allPatients.find(p=>p.id===pid);
+      const pName=(patient?.name||'Unknown').replace(/[^a-zA-Z0-9 ]/g,'').replace(/\s+/g,'_');
+      const filename=pName+'_'+dateStr+'_'+timeStr+'.wav';
+      zip.file(filename,wavBlob);
+      count++;
+    }catch(e){console.error('Export error for '+pid,e);}
+  }
+  if(count===0){showToast('No audio could be converted');return;}
+  const zipBlob=await zip.generateAsync({type:'blob'});
+  const zipName='DictateRounds_'+dateStr+'_'+timeStr+'.zip';
+  const url=URL.createObjectURL(zipBlob);
+  const a=document.createElement('a');
+  a.href=url;a.download=zipName;document.body.appendChild(a);a.click();
+  document.body.removeChild(a);URL.revokeObjectURL(url);
+  showToast('Exported '+count+' recordings as '+zipName);
+}
+
+// ═══════════════════════════════════════════
+// RENDERING
+// ═══════════════════════════════════════════
+
+function renderSelect(){
+  document.getElementById('selectSummary').textContent=allPatients.length
+    ?allFacilities.length+' facilities \u00b7 '+allPatients.length+' total patients cached'
+    :'No patient list loaded';
+  const el=document.getElementById('facilitySelector');
+  el.innerHTML=allFacilities.map(fac=>{
+    const sel=selectedFacilities.has(fac);
+    const fp=allPatients.filter(p=>p.facility===fac);
+    const wt=fp.filter(p=>p.currentTasks).length;
+    return '<div class="fac-select-item'+(sel?' selected':'')+'" onclick="toggleFacility(\''+fac.replace(/'/g,"\\'")+'\')">'
+      +'<div class="fac-checkbox">'+(sel?'\u2713':'')+'</div>'
+      +'<div class="fac-select-info">'
+      +'<div class="fac-select-name">'+escHtml(fac||'Unknown')+'</div>'
+      +'<div class="fac-select-count">'+fp.length+' patients</div>'
+      +(wt>0?'<div class="fac-select-tasks">'+wt+' with pending tasks</div>':'')
+      +'</div></div>';
+  }).join('');
+  const btn=document.getElementById('startRoundBtn');
+  const n=selectedFacilities.size;
+  const tp=allPatients.filter(p=>selectedFacilities.has(p.facility)).length;
+  btn.disabled=n===0;
+  btn.innerHTML=n===0?'Select facilities to begin':'Start Round ('+n+(n===1?' facility':' facilities')+', '+tp+' patients)';
+}
+
+function renderHome(){
+  const recorded=Object.values(recordings).filter(r=>r.status==='recorded').length;
+  const processed=Object.values(recordings).filter(r=>r.status==='processed').length;
+  const done=Object.values(recordings).filter(r=>r.status==='done').length;
+  const failed=Object.values(recordings).filter(r=>r.status==='error').length;
+  const totalRecs=Object.keys(recordings).length;
+  document.getElementById('homePatientCount').textContent=todayPatients.length+' patients';
+  let s=todayFacilities.length+' facilities';
+  if(totalRecs>0){
+    const parts=[];
+    if(recorded>0)parts.push(recorded+' pending');
+    if(processed>0)parts.push(processed+' to copy');
+    if(done>0)parts.push(done+' done');
+    if(failed>0)parts.push(failed+' failed');
+    if(parts.length>0)s+=' \u00b7 '+parts.join(' \u00b7 ');
+  }
+  document.getElementById('homeSummary').textContent=s;
+  document.getElementById('processAllBtn').style.display=recorded>0?'inline-flex':'none';
+  document.getElementById('pendingCount').textContent=recorded;
+  document.getElementById('retryFailedBtn').style.display=failed>0?'inline-flex':'none';
+  document.getElementById('failedCount').textContent=failed;
+  const hasReviewable=processed>0||done>0||failed>0;
+  document.getElementById('reviewNotesBtn').style.display=hasReviewable?'inline-flex':'none';
+  document.getElementById('processedCount').textContent=processed>0?processed:(done+failed);
+  const hasAnyAudio=Object.values(recordings).some(r=>r.audioId);
+  document.getElementById('exportAudioBtn').style.display=hasAnyAudio?'inline-flex':'none';
+  document.getElementById('clearDayBtn').style.display=totalRecs>0?'inline-flex':'none';
+  document.getElementById('facilityList').innerHTML=todayFacilities.map(fac=>{
+    const fp=todayPatients.filter(p=>p.facility===fac);
+    const fr=fp.filter(p=>recordings[p.id]?.status==='recorded').length;
+    const fpd=fp.filter(p=>recordings[p.id]?.status==='processed').length;
+    const ft=fp.filter(p=>recordings[p.id]).length;
+    let badges='';
+    if(fr>0)badges+='<span class="badge badge-amber">'+fr+' pending</span>';
+    if(fpd>0)badges+='<span class="badge badge-green">'+fpd+' done</span>';
+    let prog='';
+    if(ft>0){const pG=(fpd/fp.length)*100;const pA=((fpd+fr)/fp.length)*100;
+      prog='<div class="progress-track"><div style="height:100%;border-radius:2px;transition:width 0.3s;background:linear-gradient(90deg,var(--green) '+pG+'%,var(--amber) '+pG+'%,var(--amber) '+pA+'%,transparent '+pA+'%);width:100%"></div></div>';}
+    return '<div class="card card-clickable" onclick="selectedFacility=\''+fac.replace(/'/g,"\\'")+'\';showView(\'facility\')">'
+      +'<div style="display:flex;justify-content:space-between;align-items:flex-start"><div>'
+      +'<div class="fac-name">'+escHtml(fac||'Unknown')+'</div>'
+      +'<div class="fac-count">'+fp.length+' patients</div>'
+      +'</div><div style="display:flex;gap:6px">'+badges+'</div></div>'+prog+'</div>';
+  }).join('');
+}
+
+function renderFacility(){
+  const allFp=todayPatients.filter(p=>p.facility===selectedFacility);
+  const fp=searchQuery?allFp.filter(p=>p.name.toLowerCase().includes(searchQuery.toLowerCase())):allFp;
+  const fr=allFp.filter(p=>recordings[p.id]?.status==='recorded').length;
+  const fpd=allFp.filter(p=>recordings[p.id]?.status==='processed').length;
+  const ft=allFp.filter(p=>recordings[p.id]).length;
+  document.getElementById('facTitle').textContent=selectedFacility||'Unknown';
+  let s=allFp.length+' patients';if(ft>0)s+=' \u00b7 '+fr+' recorded \u00b7 '+fpd+' processed';
+  if(searchQuery)s+=' \u00b7 showing '+fp.length;
+  document.getElementById('facSummary').textContent=s;
+  document.getElementById('patientList').innerHTML=fp.map(pt=>{
+    const rec=recordings[pt.id];const isR=activeRecording===pt.id;const isE=expandedPatient===pt.id;
+    let cls='card';if(isR)cls+=' card-recording';else if(rec?.status==='processed')cls+=' card-processed';
+    let sb='';
+    if(rec?.status==='recorded')sb='<span class="badge badge-amber">'+fmtTime(rec.duration)+'</span>';
+    if(rec?.status==='processed')sb='<span class="badge badge-green">\u2713</span>';
+    if(rec?.status==='error')sb='<span class="badge badge-red">\u2717</span>';
+    if(rec?.status==='done')sb='<span class="badge badge-green">\u2713 done</span>';
+    let th='';
+    if(pt.currentTasks)th+='<div class="patient-task">\ud83d\udccb '+escHtml(pt.currentTasks)+'</div>';
+    if(pt.followUpTasks)th+='<div class="patient-followup">\u21b3 '+escHtml(pt.followUpTasks)+'</div>';
+    // Show patient note preview if exists
+    const pNote=patientNotes[pt.id]||'';
+    if(pNote&&!isE)th+='<div style="font-size:11px;color:var(--accent);margin-top:2px">\u270e '+escHtml(pNote.length>50?pNote.slice(0,50)+'...':pNote)+'</div>';
+    let bh='';
+    if(pt.ward)bh+='<span class="patient-bed">'+escHtml(pt.ward)+'</span>';
+    if(pt.bed)bh+='<span class="patient-bed">Bed '+escHtml(pt.bed)+'</span>';
+    let ex='';
+    if(isE){
+      let c='';
+      if(!isR){
+        const l=rec?.audioId?'Re-record':'Record';
+        const st=rec?.audioId?'background:var(--amber-dim);color:var(--amber)':'background:var(--red-dim);color:var(--red)';
+        const d=activeRecording&&activeRecording!==pt.id?'disabled':'';
+        c+='<button class="btn btn-sm" style="'+st+'" onclick="event.stopPropagation();startRecording(\''+pt.id+'\')" '+d+'>\u25cf '+l+'</button>';
+        // Append button - only show if recording exists
+        if(rec?.audioId){
+          c+='<button class="btn btn-sm" style="background:var(--accent-dim);color:var(--accent)" onclick="event.stopPropagation();startRecording(\''+pt.id+'\',true)" '+d+'>+ Append</button>';
+        }
+      }else{
+        c+='<button class="btn btn-sm btn-recording" onclick="event.stopPropagation();stopRecording()">\u25a0 Stop ('+fmtTime(recordingTime)+')</button>';
+      }
+      if(rec?.audioId&&!isR){
+        c+='<button class="btn btn-sm btn-ghost" onclick="event.stopPropagation();playAudio(\''+rec.audioId+'\')">'+(playingAudioId===rec.audioId?'\u23f8 Pause':'\u25b6 Play')+'</button>';
+        c+='<button class="btn btn-sm" style="background:var(--red-dim);color:var(--red)" onclick="event.stopPropagation();deleteRecording(\''+pt.id+'\')">\u2715 Delete</button>';
+      }
+      if(rec?.note&&rec.status==='processed')c+='<button class="btn btn-sm btn-copy" onclick="event.stopPropagation();copyNote(\''+pt.id+'\')">\ud83d\udccb Copy Note</button>';
+      // Patient note/reminder field
+      const noteVal=escHtml(patientNotes[pt.id]||'');
+      let noteField='<div style="margin-top:10px"><input class="input" type="text" placeholder="Add a note/reminder..." value="'+noteVal+'" style="font-family:\'IBM Plex Sans\',sans-serif;font-size:12px;padding:6px 10px" onclick="event.stopPropagation()" onchange="patientNotes[\''+pt.id+'\']=this.value;saveState()" onkeydown="event.stopPropagation()"></div>';
+      let tr=rec?.transcript?'<details><summary>Raw transcript</summary><div class="note-block" style="font-size:12px;color:var(--text-muted)">'+escHtml(rec.transcript)+'</div></details>':'';
+      let nh=rec?.note?'<div class="note-block">'+escHtml(rec.note)+'</div>':'';
+      ex='<div class="sep"><div class="controls">'+c+'</div>'+noteField+tr+nh+'</div>';
+    }
+    return '<div class="'+cls+'">'
+      +'<div style="display:flex;justify-content:space-between;align-items:flex-start;cursor:pointer" onclick="expandedPatient=expandedPatient===\''+pt.id+'\'?null:\''+pt.id+'\';renderFacility()">'
+      +'<div style="flex:1"><div style="display:flex;align-items:center"><span class="patient-name">'+escHtml(pt.name)+'</span>'+bh+'</div>'+th+'</div>'
+      +'<div style="display:flex;align-items:center;gap:6px">'+sb+'<span style="color:var(--text-muted);font-size:12px;margin-left:4px">'+(isE?'\u25b2':'\u25bc')+'</span></div>'
+      +'</div>'+ex+'</div>';
+  }).join('');
+}
+
+function renderReview(){
+  const processedEntries=Object.entries(recordings).filter(([_,r])=>r.status==='processed');
+  const doneEntries=Object.entries(recordings).filter(([_,r])=>r.status==='done');
+  const errorEntries=Object.entries(recordings).filter(([_,r])=>r.status==='error');
+  const pendingNotes=[...processedEntries,...errorEntries];
+  const totalReady=processedEntries.length;
+  const totalDone=doneEntries.length;
+  document.getElementById('reviewCount').textContent=totalReady>0?totalReady+' notes to copy':(totalDone>0?'All notes copied':'No processed notes');
+  let summaryParts=[];
+  if(totalDone>0)summaryParts.push(totalDone+' done');
+  if(errorEntries.length>0)summaryParts.push(errorEntries.length+' errors');
+  document.getElementById('reviewSummary').textContent=summaryParts.length>0?summaryParts.join(' \u00b7 '):'Copy and paste into C2C and facility EMR';
+  // Show/hide retry button
+  document.getElementById('retryFailedReviewBtn').style.display=errorEntries.length>0?'inline-flex':'none';
+  document.getElementById('failedCountReview').textContent=errorEntries.length;
+  // Group all entries by facility
+  const allReviewEntries=[...pendingNotes,...doneEntries];
+  const facGroups={};
+  for(const[pid,rec]of allReviewEntries){
+    const patient=todayPatients.find(p=>p.id===pid)||allPatients.find(p=>p.id===pid);
+    if(!patient)continue;
+    const fac=patient.facility||'Unknown';
+    if(!facGroups[fac])facGroups[fac]=[];
+    facGroups[fac].push([pid,rec,patient]);
+  }
+  // Sort patients within each facility: uncopied first, then done, alphabetically within each group
+  for(const fac of Object.keys(facGroups)){
+    facGroups[fac].sort((a,b)=>{
+      const aD=a[1].status==='done'?1:0;const bD=b[1].status==='done'?1:0;
+      if(aD!==bD)return aD-bD;
+      return a[2].name.localeCompare(b[2].name);
+    });
+  }
+  // Use todayFacilities order, then any remaining
+  const facOrder=todayFacilities.filter(f=>facGroups[f]);
+  for(const f of Object.keys(facGroups)){if(!facOrder.includes(f))facOrder.push(f);}
+  const reviewEl=document.getElementById('reviewList');
+  let html='';
+  for(const fac of facOrder){
+    if(!facGroups[fac])continue;
+    html+='<div style="font-size:14px;font-weight:600;color:var(--text-muted);margin:20px 0 10px;padding-bottom:6px;border-bottom:1px solid var(--border)">'+escHtml(fac)+'</div>';
+    for(const[pid,rec,patient]of facGroups[fac]){
+      const isErr=rec.status==='error';
+      const isDone=rec.status==='done';
+      let bh='';
+      if(patient.ward)bh+='<span class="patient-bed">'+escHtml(patient.ward)+'</span>';
+      if(patient.bed)bh+='<span class="patient-bed">Bed '+escHtml(patient.bed)+'</span>';
+      // Clean note: strip blank lines after headings
+      const cleanNote=(rec.note||'').replace(/(History Of Presenting Illness|Examination|Plan)\n\n+/g,'$1\n');
+      const cardStyle=isDone?' style="opacity:0.5"':'';
+      const cardClass=isErr?' card-recording':isDone?'':' card-processed';
+      const btnHtml=isDone
+        ?'<span class="badge badge-green">\u2713 Done</span>'
+        :'<button class="btn btn-sm btn-copy" onclick="copyNote(\''+pid+'\')">\ud83d\udccb Copy</button>';
+      html+='<div class="card'+cardClass+'"'+cardStyle+'>'
+        +'<div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:8px">'
+        +'<div><div style="display:flex;align-items:center;flex-wrap:wrap"><span class="patient-name">'+escHtml(patient.name)+'</span>'+bh+'</div></div>'
+        +btnHtml
+        +'</div>'
+        +'<div class="note-block" style="margin-top:0">'+escHtml(cleanNote)+'</div>'
+        +'</div>';
+    }
+  }
+  reviewEl.innerHTML=html;
+}
+
+function renderSettings(){
+  document.getElementById('deepgramKey').value=localStorage.getItem('dr_deepgramKey')||'';
+  document.getElementById('anthropicKey').value=localStorage.getItem('dr_anthropicKey')||'';
+  document.getElementById('keytermsInput').value=localStorage.getItem('dr_keyterms')||'';
+  document.getElementById('promptPreview').textContent=SCRIBE_PROMPT.slice(0,600)+'...';
+}
+
+// ─── Hotkeys ───
+document.addEventListener('keydown',(e)=>{
+  if(e.target.tagName==='INPUT'||e.target.tagName==='TEXTAREA')return;
+  if(document.getElementById('view-facility').style.display==='none')return;
+  // R = start recording on expanded patient
+  if((e.key==='r'||e.key==='R')&&!activeRecording&&expandedPatient){
+    e.preventDefault();startRecording(expandedPatient);
+  }
+  // A = append to existing recording
+  if((e.key==='a'||e.key==='A')&&!activeRecording&&expandedPatient&&recordings[expandedPatient]?.audioId){
+    e.preventDefault();startRecording(expandedPatient,true);
+  }
+  // S = stop recording
+  if((e.key==='s'||e.key==='S')&&activeRecording){
+    e.preventDefault();stopRecording();
+  }
+});
+
+// ─── Init ───
+loadState();
+showView(getInitialView());
+</script>
+</body>
+</html>
