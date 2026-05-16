@@ -220,6 +220,186 @@
 <script>
 const SCRIBE_PROMPT = "ROLE\nYou are a passive AI medical scribe assisting a primary care physician in aged care. Produce a brief, clinically useful note from a transcript.\n\nINPUT\n- Transcript may have ONE speaker (Doctor only) or TWO speakers (Doctor and Patient)\n- Speakers may be labeled (\"Doctor:\", \"Patient:\"). If there is only one speaker or labels are absent, assume ALL lines are from the Doctor.\n- Use only what is explicitly stated AND ENSURE ALL spoken input is included in the output, including all history and any pathology results including numbers. Do not omit any details.\n\nOUTPUT (STRICT FORMAT)\nReturn ONLY the following three headings: \n\nHistory Of Presenting Illness\n\nExamination\n\nPlan\n\nENSURE headings contain Title Case, in this exact order, with concise dash-prefixed items beneath each. Use ONLY dashes \"-\" for list items, NEVER bullet points or any other list marker. Do not add other headings or commentary. DO NOT number the headings.\n\nSTYLE & CONSTRAINTS\n- Be concise: short clinical phrases, one idea per dash item.\n- Use Australian spelling not USA spelling:\n - \"stabilization\" \u2192 \"stabilisation\"\n- Use only information explicitly stated in the transcript. Do not infer or invent.\n- Include relevant negatives only if spoken (e.g., \"no fever\").\n- Convert all spoken/written numbers to numeric characters (cardinals and ordinals):\n  - \"three days\" \u2192 \"3 days\"; \"twenty five\" \u2192 \"25\"; \"fifth\" \u2192 \"5th\"; \"thirty seven point six\" \u2192 \"37.6\".\n  - Preserve units/abbreviations exactly as spoken (mg, mmHg, bpm, L/min, etc.).\n- Vitals/measurements: keep common clinical notation if spoken (e.g., \"120/80\", \"SpO2 96% on RA\").\n- Meds: list name, dose, route, frequency exactly as spoken (convert numbers only).\n- If a section has no explicit content, output a single dash \"-\".\n- Do NOT USE any em dashes\n- Do NOT USE bullet points (\u2022) or asterisks (*) as list markers. Use ONLY dashes \"-\".\n- Ensure ALL spoken input is included, especially in the history component, including any pathology results including numbers\n\nMAPPING LOGIC\n- History of presenting illness: symptoms, onset/duration, context, collateral info if explicitly stated by the Doctor (e.g., \"staff report\u2026\").\n- Examination: objective findings and measurements explicitly stated by the Doctor (or Patient if clearly exam-like).\n- Plan: tests, medications (new/changed/ceased), referrals, non-pharmacological actions, monitoring, follow-up timing, safety-net\u2014ONLY if explicitly stated.\n\nSINGLE-SPEAKER HANDLING (Doctor-only)\n- Treat the entire transcript as the Doctor's dictation.\n- Use cue phrases to map content:\n  - \"on exam\", \"examination\", vitals/measurements \u21d2 Examination\n  - \"plan\", \"we will\", \"start/cease/continue\", \"order\", \"refer\" \u21d2 Plan\n  - All other clinically relevant statements (history, collateral, functional) \u21d2 History of presenting illness\n\nQUALITY CHECK\n- Exactly 3 headings in the specified order.\n- Dash-prefixed concise items only; numbers converted; no extra commentary.\n- No bullet points (\u2022), only dashes (\"-\").\n- No invented findings or plans.\n- Ensure ALL spoken input has been included in output, including any pathology results including numbers";
 
+// ─── 731 Constants ───
+const MDCP_731_PROMPT = `ROLE
+You are a passive AI clinical documentation assistant supporting an Australian GP working in residential aged care. You are NOT a clinical decision-maker. Your job is to organise the GP's dictated or typed clinical narrative into a structured MBS item 731 contribution to a multidisciplinary care plan, using only what the GP has explicitly stated.
+
+INPUT
+The user input is the GP's free-text narrative about a single residential aged care resident. It may be dictated speech (transcribed) or typed. It may have informal language, repetition, self-corrections, or speech-to-text artefacts.
+
+OUTPUT
+Call the \`submit_mdcp_731\` tool exactly once. Populate the schema using only information explicitly stated by the GP. Do not infer clinical content the GP did not state.
+
+CRITICAL RULES
+1. Do not invent facts. If a field is not mentioned in input, mark it 'Not stated' or use an empty value per the schema rather than guess.
+2. Do not infer completion of actions unless the GP explicitly states it. ('RMMR completed Jan 2026' = Completed; 'RMMR pending' = Due; silence on RMMR = Not stated.)
+3. Use Australian spelling throughout (optimise, organisation, paediatric, behaviour, etc.).
+4. Convert spoken numbers to numerics ('one hundred and thirty' → '130'; 'three times weekly' → '3 times weekly').
+5. Preserve patient-specific details. Do not generalise specific clinical statements into generic phrases.
+6. Flag clinical conflicts in \`checks_to_confirm\`. Specifically watch for:
+   - BP targets that conflict with reported postural hypotension or recent antihypertensive reduction
+   - Goals that may conflict with documented frailty status or care goals
+   - Monitoring intervals that don't match the stated clinical risk
+   - Internal inconsistencies in the GP's dictation
+   - Stated targets that exceed evidence base for the patient's age/frailty profile
+7. Surface relevant standard items missing from input in \`not_documented\`. Always check for:
+   - Advance care plan / goals-of-care direction
+   - Substitute decision-maker priorities or 'what matters to the resident'
+   - Allergies
+   - Source of immunisation status (if immunisations mentioned without a stated source like AIR or RACH record)
+   - Behavioural/cognitive monitoring plan (if dementia mentioned)
+8. For each goal, you MUST include a condition, a goal, and at least one action with provider/action/monitoring/review specified. If any of these are not stated in input, write 'Not stated' for that field rather than fabricate plausible content.
+9. Avoid boilerplate review-interval phrases. Use 'Reviewed on regular GP RACH rounds' style language ONLY if the GP explicitly indicated regular rounds. Do not default to 'weekly ward rounds' unless the GP said weekly.
+10. Goals must be individualised. A goal of 'monitor condition' is too generic — push it into \`checks_to_confirm\` asking the GP to specify what is being monitored and why.
+
+CONTRIBUTION FRAMING
+This output is a GP CONTRIBUTION to a multidisciplinary care plan prepared by the residential aged care facility (or another provider before discharge from hospital). It is NOT a standalone GP care plan. The output frames the GP's input as additions and recommendations to an existing facility-prepared plan.
+
+QUALITY CHECK BEFORE SUBMITTING THE TOOL CALL
+- All required schema fields populated
+- No invented clinical content
+- \`checks_to_confirm\` populated if any clinical conflict or ambiguity exists; empty array if none
+- \`not_documented\` populated with relevant standard items not addressed in input
+- Australian spelling throughout
+- Patient-specific language preserved (not generalised)`;
+
+const MDCP_731_TOOL_SCHEMA = {
+  type: 'object',
+  required: [
+    'source_material_reviewed',
+    'medication_chart_review',
+    'rmmr',
+    'immunisations',
+    'assessments',
+    'mdt_case_conference',
+    'health_status_summary',
+    'conditions',
+    'goals',
+    'checks_to_confirm',
+    'not_documented'
+  ],
+  properties: {
+    source_material_reviewed: {
+      type: 'array',
+      items: {type: 'string'},
+      description: "Documents/records reviewed. Examples: 'RACH facility multidisciplinary care plan', 'Medication chart', 'RMMR dated [date]', 'Geriatrician CGA dated [date]'. If a source isn't explicitly mentioned in input, omit it rather than invent."
+    },
+    medication_chart_review: {
+      type: 'object',
+      required: ['reviewed_today', 'changes'],
+      properties: {
+        reviewed_today: {type: 'boolean'},
+        changes: {type: 'string', description: "Either 'No changes' or specific changes made today"}
+      }
+    },
+    rmmr: {
+      type: 'object',
+      required: ['status', 'date'],
+      properties: {
+        status: {type: 'string', enum: ['Completed', 'Due', 'Not stated']},
+        date: {type: 'string', description: "Date if completed, 'Not stated' if missing, 'NA' if not applicable"}
+      }
+    },
+    immunisations: {
+      type: 'object',
+      required: ['influenza_current_year', 'pneumococcal', 'covid_booster', 'shingles', 'rsv', 'adt', 'source'],
+      properties: {
+        influenza_current_year: {type: 'string', enum: ['Up to date', 'DUE', 'Not stated']},
+        pneumococcal: {type: 'string', enum: ['Up to date', 'DUE', 'Not stated']},
+        covid_booster: {type: 'string', enum: ['Up to date', 'DUE', 'Not stated']},
+        shingles: {type: 'string', enum: ['Up to date', 'DUE', 'Not stated']},
+        rsv: {type: 'string', enum: ['Up to date', 'DUE', 'Not stated']},
+        adt: {type: 'string', enum: ['Up to date', 'DUE if sustains tetanus prone wound', 'Not stated']},
+        source: {type: 'string', description: "Source of immunisation status, e.g. 'AIR', 'RACH record', 'Not stated'"}
+      }
+    },
+    assessments: {
+      type: 'object',
+      required: ['cma_gp', 'cga_geriatrician'],
+      properties: {
+        cma_gp: {
+          type: 'object',
+          required: ['completed', 'date', 'recommendations_actioned', 'details'],
+          properties: {
+            completed: {type: 'string', enum: ['Yes', 'No', 'Not stated']},
+            date: {type: 'string'},
+            recommendations_actioned: {type: 'string', enum: ['Yes', 'No', 'Partial', 'NA']},
+            details: {type: 'string', description: 'Brief detail of recommendations and what was actioned. Empty string if NA.'}
+          }
+        },
+        cga_geriatrician: {
+          type: 'object',
+          required: ['completed', 'date', 'recommendations_actioned', 'details'],
+          properties: {
+            completed: {type: 'string', enum: ['Yes', 'No', 'Not stated']},
+            date: {type: 'string'},
+            recommendations_actioned: {type: 'string', enum: ['Yes', 'No', 'Partial', 'NA']},
+            details: {type: 'string'}
+          }
+        }
+      }
+    },
+    mdt_case_conference: {
+      type: 'object',
+      required: ['recent', 'date', 'goals_met'],
+      properties: {
+        recent: {type: 'string', enum: ['Yes', 'No', 'Not stated']},
+        date: {type: 'string'},
+        goals_met: {type: 'string', enum: ['Yes', 'No', 'Partial', 'NA']}
+      }
+    },
+    health_status_summary: {
+      type: 'string',
+      description: "One-line overall health status, e.g. 'Stable with advanced frailty in residential aged care setting'"
+    },
+    conditions: {
+      type: 'array',
+      items: {type: 'string'},
+      description: 'List of current chronic conditions (active for this patient)'
+    },
+    goals: {
+      type: 'array',
+      items: {
+        type: 'object',
+        required: ['condition', 'goal', 'actions'],
+        properties: {
+          condition: {type: 'string'},
+          goal: {type: 'string', description: 'The clinical goal of care for this condition'},
+          actions: {
+            type: 'array',
+            items: {
+              type: 'object',
+              required: ['provider', 'action', 'monitoring', 'review'],
+              properties: {
+                provider: {type: 'string', description: 'e.g., GP, PT, Podiatrist, Audiologist, Optometrist, Facility care staff, Neurology clinic'},
+                action: {type: 'string', description: 'What will be done'},
+                monitoring: {type: 'string', description: 'How it will be monitored'},
+                review: {type: 'string', description: 'When it will be reviewed'}
+              }
+            }
+          }
+        }
+      }
+    },
+    checks_to_confirm: {
+      type: 'array',
+      items: {type: 'string'},
+      description: 'Items requiring clinician confirmation before finalising. Include: clinical conflicts (e.g. BP target vs postural hypotension); ambiguities in dictation; internal inconsistencies; statements that may not match clinical risk profile. Empty array if none.'
+    },
+    not_documented: {
+      type: 'array',
+      items: {type: 'string'},
+      description: "Relevant standard items not addressed in input. Always check for: advance care plan / goals-of-care direction; SDM priorities / 'what matters to the resident'; allergies; source of immunisation status (if immunisations mentioned without a source); behavioural/cognitive monitoring plan (if dementia mentioned). Empty array if all standard items addressed."
+    }
+  }
+};
+
+const MDCP_731_TOOL_SPEC = {
+  name: 'submit_mdcp_731',
+  description: 'Submit the structured MBS item 731 GP contribution to a multidisciplinary care plan.',
+  input_schema: MDCP_731_TOOL_SCHEMA
+};
+
 // ─── State ───
 let allPatients = [];
 let allFacilities = [];
@@ -405,6 +585,92 @@ function copyNote(pid){
     else if(document.getElementById('view-facility').style.display!=='none')renderFacility();
     else renderHome();
   }
+}
+
+function renderMdcp731(data) {
+  const lines = [];
+
+  lines.push('GP Contribution to MDCP (Residential Aged Care Facility plan)');
+  lines.push('');
+
+  lines.push('Source material reviewed:');
+  for (const item of (data.source_material_reviewed || [])) lines.push('- ' + item);
+  lines.push('');
+
+  lines.push('This contribution is to the multidisciplinary care plan prepared by the residential aged care facility. The following review and recommendations are provided by the GP for inclusion in that plan.');
+  lines.push('');
+
+  lines.push('1) Medication charts reviewed today');
+  lines.push('- ' + (data.medication_chart_review.reviewed_today ? data.medication_chart_review.changes : 'Not reviewed today'));
+  lines.push('');
+
+  lines.push('2) Recent RMMR completed? ' + data.rmmr.status);
+  lines.push('- Date: ' + data.rmmr.date);
+  lines.push('');
+
+  lines.push('3) Immunisations reviewed (source: ' + data.immunisations.source + '):');
+  lines.push('-- Influenza (current year): ' + data.immunisations.influenza_current_year);
+  lines.push('-- Pneumococcal: ' + data.immunisations.pneumococcal);
+  lines.push('-- COVID booster: ' + data.immunisations.covid_booster);
+  lines.push('-- Shingles: ' + data.immunisations.shingles);
+  lines.push('-- RSV: ' + data.immunisations.rsv);
+  lines.push('-- ADT: ' + data.immunisations.adt);
+  lines.push('');
+
+  lines.push('4) Recent comprehensive medical assessment?');
+  const cma = data.assessments.cma_gp;
+  lines.push('- CMA (GP)? ' + cma.completed);
+  lines.push('  - Date: ' + cma.date);
+  lines.push('  - Specific recommendations actioned? ' + cma.recommendations_actioned);
+  if (cma.details) lines.push('  - ' + cma.details);
+  const cga = data.assessments.cga_geriatrician;
+  lines.push('- CGA (Geriatrician)? ' + cga.completed);
+  lines.push('  - Date: ' + cga.date);
+  lines.push('  - Specific recommendations actioned? ' + cga.recommendations_actioned);
+  if (cga.details) lines.push('  - ' + cga.details);
+  lines.push('');
+
+  lines.push('5) Recent MDT care conference? ' + data.mdt_case_conference.recent);
+  lines.push('- Date: ' + data.mdt_case_conference.date);
+  lines.push('- Goals met? ' + data.mdt_case_conference.goals_met);
+  lines.push('');
+
+  lines.push('6) Health status and current conditions:');
+  lines.push(data.health_status_summary);
+  lines.push('');
+  for (const condition of (data.conditions || [])) lines.push(condition);
+  lines.push('');
+
+  lines.push('7) Current Individualised Goals of Care:');
+  for (const goal of (data.goals || [])) {
+    lines.push('');
+    lines.push('Condition: ' + goal.condition);
+    lines.push('Goal: ' + goal.goal);
+    lines.push('Who will be involved, how will it be achieved, how will it be monitored and when will it be reviewed:');
+    for (const action of (goal.actions || [])) {
+      lines.push('- ' + action.provider + ': ' + action.action + ', ' + action.monitoring + ', ' + action.review);
+    }
+  }
+
+  lines.push('');
+  lines.push('');
+  lines.push('---');
+
+  const checks = data.checks_to_confirm || [];
+  if (checks.length > 0) {
+    lines.push('');
+    lines.push('Checks to confirm before finalising:');
+    for (const item of checks) lines.push('- ' + item);
+  }
+
+  const notDoc = data.not_documented || [];
+  if (notDoc.length > 0) {
+    lines.push('');
+    lines.push('Items not documented in source information:');
+    for (const item of notDoc) lines.push('- ' + item);
+  }
+
+  return lines.map(l => l.trimEnd()).join('\n');
 }
 
 // ─── Batch Process (parallel, 3 concurrent) ───
