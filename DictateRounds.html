@@ -103,7 +103,7 @@
     <div class="logo">Dictate<span class="logo-accent">Rounds</span></div>
     <div class="header-actions">
       <span id="processingIndicator" style="font-size:12px;color:var(--amber);display:none;"></span>
-      <button class="icon-btn" onclick="showView('settings')">&#9881;</button>
+      <button class="icon-btn" id="settingsBtn">&#9881;</button>
     </div>
   </div>
 
@@ -114,14 +114,11 @@
       <div class="stat-value">Import Patient List</div>
       <div class="stat-sub">Drop your Patient Master List to begin</div>
     </div>
-    <div class="dropzone" onclick="document.getElementById('fileInput').click()"
-         ondragover="event.preventDefault();this.classList.add('drag-over')"
-         ondragleave="this.classList.remove('drag-over')"
-         ondrop="handleDrop(event)">
+    <div class="dropzone" id="dropzone">
       <div class="dropzone-icon">&#128203;</div>
       <div class="dropzone-text"><strong>Drop your Patient Master List here</strong><br>or click to browse (.xlsx)</div>
     </div>
-    <input type="file" id="fileInput" accept=".xlsx,.xls" style="display:none" onchange="handleFileSelect(event)">
+    <input type="file" id="fileInput" accept=".xlsx,.xls" style="display:none">
   </div>
 
   <!-- FACILITY SELECTOR VIEW -->
@@ -133,11 +130,11 @@
     </div>
     <div id="facilitySelector"></div>
     <div style="margin-top:20px">
-      <button class="btn btn-primary btn-full" id="startRoundBtn" disabled onclick="startRound()">Select facilities to begin</button>
+      <button class="btn btn-primary btn-full" id="startRoundBtn" disabled>Select facilities to begin</button>
     </div>
     <div style="display:flex;gap:8px;margin-top:12px">
-      <button class="btn btn-ghost btn-sm" onclick="document.getElementById('fileInput2').click()">&#128203; Re-import list</button>
-      <input type="file" id="fileInput2" accept=".xlsx,.xls" style="display:none" onchange="handleFileSelect(event)">
+      <button class="btn btn-ghost btn-sm" id="reimportBtn">&#128203; Re-import list</button>
+      <input type="file" id="fileInput2" accept=".xlsx,.xls" style="display:none">
     </div>
   </div>
 
@@ -149,23 +146,23 @@
       <div class="stat-sub" id="homeSummary"></div>
     </div>
     <div style="display:flex;gap:8px;margin-bottom:16px;flex-wrap:wrap">
-      <button class="btn btn-ghost btn-sm" onclick="backToSelect()">&larr; Change Facilities</button>
-      <button class="btn btn-green btn-sm" id="processAllBtn" style="display:none" onclick="batchProcess()">&#9889; Process (<span id="pendingCount">0</span>)</button>
-      <button class="btn btn-sm" id="retryFailedBtn" style="display:none;background:var(--red-dim);color:var(--red)" onclick="batchProcess(true)">&#8635; Retry Failed (<span id="failedCount">0</span>)</button>
-      <button class="btn btn-primary btn-sm" id="reviewNotesBtn" style="display:none" onclick="showView('review')">&#128203; Review Notes (<span id="processedCount">0</span>)</button>
-      <button class="btn btn-ghost btn-sm" id="exportAudioBtn" style="display:none" onclick="exportAllAudio()">&#128229; Export Audio</button>
-      <button class="btn btn-ghost btn-sm" id="clearDayBtn" style="display:none" onclick="clearDay()">Clear Day</button>
+      <button class="btn btn-ghost btn-sm" id="changeFacilitiesBtn">&larr; Change Facilities</button>
+      <button class="btn btn-green btn-sm" id="processAllBtn" style="display:none">&#9889; Process (<span id="pendingCount">0</span>)</button>
+      <button class="btn btn-sm" id="retryFailedBtn" style="display:none;background:var(--red-dim);color:var(--red)">&#8635; Retry Failed (<span id="failedCount">0</span>)</button>
+      <button class="btn btn-primary btn-sm" id="reviewNotesBtn" style="display:none">&#128203; Review Notes (<span id="processedCount">0</span>)</button>
+      <button class="btn btn-ghost btn-sm" id="exportAudioBtn" style="display:none">&#128229; Export Audio</button>
+      <button class="btn btn-ghost btn-sm" id="clearDayBtn" style="display:none">Clear Day</button>
     </div>
     <div id="facilityList"></div>
   </div>
 
   <!-- FACILITY DETAIL VIEW -->
   <div id="view-facility" style="display:none">
-    <button class="icon-btn" onclick="showView('home')" style="margin-bottom:16px">&larr; Back</button>
+    <button class="icon-btn" id="facilityBackBtn" style="margin-bottom:16px">&larr; Back</button>
     <div style="font-size:22px;font-weight:700;letter-spacing:-0.5px;margin-bottom:4px" id="facTitle"></div>
     <div class="stat-sub" id="facSummary" style="margin-bottom:12px"></div>
     <div style="position:sticky;top:0;z-index:10;background:var(--bg);padding:8px 0 12px">
-      <input class="input" type="text" placeholder="Search patients..." id="patientSearch" oninput="searchQuery=this.value;renderFacility()" style="font-family:'IBM Plex Sans',sans-serif;font-size:14px">
+      <input class="input" type="text" placeholder="Search patients..." id="patientSearch" style="font-family:'IBM Plex Sans',sans-serif;font-size:14px">
     </div>
     <div id="patientList"></div>
   </div>
@@ -173,8 +170,8 @@
   <!-- REVIEW PROCESSED NOTES VIEW -->
   <div id="view-review" style="display:none">
     <div style="display:flex;gap:8px;margin-bottom:16px;flex-wrap:wrap">
-      <button class="icon-btn" onclick="showView('home')">&larr; Back to Round</button>
-      <button class="btn btn-sm" id="retryFailedReviewBtn" style="display:none;background:var(--red-dim);color:var(--red)" onclick="batchProcess(true)">&#8635; Retry Failed (<span id="failedCountReview">0</span>)</button>
+      <button class="icon-btn" id="reviewBackBtn">&larr; Back to Round</button>
+      <button class="btn btn-sm" id="retryFailedReviewBtn" style="display:none;background:var(--red-dim);color:var(--red)">&#8635; Retry Failed (<span id="failedCountReview">0</span>)</button>
     </div>
     <div style="margin-bottom:20px">
       <div class="stat-label">Processed Notes</div>
@@ -186,21 +183,21 @@
 
   <!-- SETTINGS VIEW -->
   <div id="view-settings" style="display:none">
-    <button class="icon-btn" onclick="goBackFromSettings()" style="margin-bottom:16px">&larr; Back</button>
+    <button class="icon-btn" id="settingsBackBtn" style="margin-bottom:16px">&larr; Back</button>
     <div style="font-size:22px;font-weight:700;margin-bottom:20px">Settings</div>
     <div class="settings-section">
       <label class="input-label" for="deepgramKey">Deepgram API Key (for transcription)</label>
-      <input class="input" type="password" placeholder="your deepgram api key" id="deepgramKey" onchange="localStorage.setItem('dr_deepgramKey',this.value)">
+      <input class="input" type="password" placeholder="your deepgram api key" id="deepgramKey">
       <div class="input-hint">Used for Nova-3 Medical speech-to-text. Free $200 credit at deepgram.com</div>
     </div>
     <div class="settings-section">
       <label class="input-label" for="anthropicKey">Anthropic API Key (for note structuring)</label>
-      <input class="input" type="password" placeholder="sk-ant-..." id="anthropicKey" onchange="localStorage.setItem('dr_anthropicKey',this.value)">
+      <input class="input" type="password" placeholder="sk-ant-..." id="anthropicKey">
       <div class="input-hint">Used for Claude Sonnet post-processing of transcripts</div>
     </div>
     <div class="settings-section">
       <label class="input-label" for="keytermsInput">Deepgram Keyterm Prompts (one per line)</label>
-      <textarea class="keyterms-input" id="keytermsInput" placeholder="RMMR&#10;RACF&#10;bisoprolol&#10;polypharmacy&#10;PIP QI" onchange="localStorage.setItem('dr_keyterms',this.value)"></textarea>
+      <textarea class="keyterms-input" id="keytermsInput" placeholder="RMMR&#10;RACF&#10;bisoprolol&#10;polypharmacy&#10;PIP QI"></textarea>
       <div class="input-hint">Medical terms Deepgram should prioritise. Up to 100 terms supported.</div>
     </div>
     <div class="settings-box">
@@ -471,6 +468,7 @@ function handleDrop(e){e.preventDefault();e.currentTarget.classList.remove('drag
 function handleFileSelect(e){if(e.target.files[0])importFile(e.target.files[0]);e.target.value=''}
 
 function importFile(file){
+  if(isProcessing){showToast('Processing in progress - please wait');return}
   const reader=new FileReader();
   reader.onload=(e)=>{
     try{
@@ -580,14 +578,19 @@ async function playAudio(aid){
   currentAudio.play();playingAudioId=aid;renderFacility();
 }
 
-function copyNote(pid){
+async function copyNote(pid){
   if(recordings[pid]?.note){
     const noteType=recordings[pid]?.noteType||'scribe';
     let text=recordings[pid].note;
     if(noteType==='scribe'){
       text=text.replace(/(History Of Presenting Illness|Examination|Plan)\n\n+/g,'$1\n');
     }
-    navigator.clipboard.writeText(text);
+    try{
+      await navigator.clipboard.writeText(text);
+    }catch(err){
+      showToast('Copy failed - please try again');
+      return;
+    }
     recordings[pid].status='done';
     saveState();
     showToast('Note copied and marked as done');
@@ -729,6 +732,7 @@ async function processOne(pid,rec,dgKey,anKey,kt){
 }
 
 async function batchProcess(retryMode){
+  if(isProcessing){showToast('Processing in progress - please wait');return}
   const dgKey=localStorage.getItem('dr_deepgramKey');
   const anKey=localStorage.getItem('dr_anthropicKey');
   const toProc=retryMode
@@ -774,24 +778,40 @@ async function batchProcess(retryMode){
 }
 
 // ─── Text input / single-patient processing helpers ───
+function inputReadyStatus(rec,mode){
+  return mode==='text'
+    ?(rec.textInput?.trim()?'text-ready':null)
+    :(rec.audioId?'recorded':null);
+}
+
 function setNoteType(pid,type){
   const prev=recordings[pid]||{inputMode:'audio',audioId:null,duration:0,note:null,transcript:null,textInput:null,structuredData:null};
-  recordings[pid]={...prev,noteType:type,structuredData:type!=='mdcp_731'?null:prev.structuredData};
+  const prevType=prev.noteType||'scribe';
+  if(prevType===type){
+    recordings[pid]={...prev,noteType:type};
+    saveState();renderFacility();return;
+  }
+  const inputMode=prev.inputMode||'audio';
+  const newStatus=inputReadyStatus(prev,inputMode);
+  recordings[pid]={...prev,noteType:type,status:newStatus,note:null,transcript:null,structuredData:null};
   saveState();renderFacility();
 }
 
 function setInputMode(pid,mode){
   const prev=recordings[pid]||{noteType:'scribe',audioId:null,duration:0,note:null,transcript:null,textInput:null,structuredData:null};
-  let newStatus=prev.status;
-  if(mode==='audio'&&prev.status==='text-ready')newStatus=prev.audioId?'recorded':null;
-  if(mode==='text'&&prev.status==='recorded')newStatus=prev.textInput?.trim()?'text-ready':null;
-  recordings[pid]={...prev,inputMode:mode,status:newStatus};
+  const prevMode=prev.inputMode||'audio';
+  if(prevMode===mode){
+    recordings[pid]={...prev,inputMode:mode};
+    saveState();renderFacility();return;
+  }
+  const newStatus=inputReadyStatus(prev,mode);
+  recordings[pid]={...prev,inputMode:mode,status:newStatus,note:null,transcript:null,structuredData:null};
   saveState();renderFacility();
 }
 
 function handleTextInput(pid,value){
   const prev=recordings[pid]||{noteType:'scribe',inputMode:'text',audioId:null,duration:0,note:null,transcript:null,structuredData:null};
-  recordings[pid]={...prev,inputMode:'text',textInput:value||null,status:value.trim()?'text-ready':(prev.audioId?'recorded':null)};
+  recordings[pid]={...prev,inputMode:'text',textInput:value||null,status:value.trim()?'text-ready':null,note:null,transcript:null,structuredData:null};
   saveState();
   const ctrl=document.getElementById('text-ctrl-'+pid);
   if(!ctrl)return;
@@ -801,7 +821,7 @@ function handleTextInput(pid,value){
     btn=document.createElement('button');
     btn.className='btn btn-sm btn-primary btn-process-single';
     btn.innerHTML='&#9889; Process this';
-    btn.onclick=e=>{e.stopPropagation();processSingle(pid);};
+    btn.addEventListener('click',e=>{e.stopPropagation();processSingle(pid);});
     ctrl.insertBefore(btn,ctrl.firstChild);
   }else if(!hasText&&btn){
     btn.remove();
@@ -809,6 +829,7 @@ function handleTextInput(pid,value){
 }
 
 async function processSingle(pid){
+  if(isProcessing){showToast('Processing in progress - please wait');return}
   const dgKey=localStorage.getItem('dr_deepgramKey');
   const anKey=localStorage.getItem('dr_anthropicKey');
   const rec=recordings[pid];
@@ -871,6 +892,7 @@ function generateFinalNote(pid){
 }
 
 async function reExtract731(pid){
+  if(isProcessing){showToast('Processing in progress - please wait');return}
   const anKey=localStorage.getItem('dr_anthropicKey');
   const rec=recordings[pid];
   if(!rec||!anKey){showView('settings');showToast('Please set Anthropic API key first');return}
@@ -894,20 +916,22 @@ async function reExtract731(pid){
 function cancelReview(pid){expandedPatient=null;renderFacility();}
 
 function renderReviewForm(pid,data){
-  const p="'"+pid+"'";
+  const pidAttr=escHtml(pid);
+  const fieldAttrs=path=>' data-mdcp-field="'+escHtml(path)+'" data-patient-id="'+pidAttr+'"';
+  const actionAttrs=(action,extra='')=>' data-mdcp-action="'+action+'" data-patient-id="'+pidAttr+'"'+extra;
   const sec=t=>'<div style="font-size:11px;font-weight:600;color:var(--text-muted);margin:16px 0 8px;padding-bottom:4px;border-bottom:1px solid var(--border);text-transform:uppercase;letter-spacing:0.5px">'+t+'</div>';
-  const inp=(path,val,ph)=>'<input name="'+path+'" class="input" type="text" value="'+escHtml(val||'')+'" placeholder="'+escHtml(ph||'')+'" oninput="updateField731('+p+',\''+path+'\',this.value)" onclick="event.stopPropagation()" onkeydown="event.stopPropagation()">';
-  const sel=(path,opts,cur)=>'<select name="'+path+'" class="input" style="width:auto;display:inline-block" onchange="updateField731('+p+',\''+path+'\',this.value)">'+opts.map(o=>'<option'+(o===cur?' selected':'')+'>'+escHtml(o)+'</option>').join('')+'</select>';
+  const inp=(path,val,ph)=>'<input name="'+escHtml(path)+'" class="input" type="text" value="'+escHtml(val||'')+'" placeholder="'+escHtml(ph||'')+'"'+fieldAttrs(path)+'>';
+  const sel=(path,opts,cur)=>'<select name="'+escHtml(path)+'" class="input" style="width:auto;display:inline-block"'+fieldAttrs(path)+'>'+opts.map(o=>'<option value="'+escHtml(o)+'"'+(o===cur?' selected':'')+'>'+escHtml(o)+'</option>').join('')+'</select>';
   let h='';
 
   h+=sec('Source material reviewed');
   (data.source_material_reviewed||[]).forEach((item,i)=>{
-    h+='<div style="display:flex;gap:6px;margin-bottom:6px"><input name="source_material_reviewed" class="input" type="text" value="'+escHtml(item)+'" oninput="updateField731('+p+',\'source_material_reviewed.'+i+'\',this.value)" onclick="event.stopPropagation()" onkeydown="event.stopPropagation()" style="flex:1"><button class="btn btn-sm" style="background:var(--red-dim);color:var(--red)" onclick="event.stopPropagation();removeItem731('+p+',\'source_material_reviewed\','+i+')">✕</button></div>';
+    h+='<div style="display:flex;gap:6px;margin-bottom:6px"><input name="source_material_reviewed" class="input" type="text" value="'+escHtml(item)+'"'+fieldAttrs('source_material_reviewed.'+i)+' style="flex:1"><button class="btn btn-sm" style="background:var(--red-dim);color:var(--red)"'+actionAttrs('remove-item',' data-path="source_material_reviewed" data-index="'+i+'"')+'>✕</button></div>';
   });
-  h+='<button class="btn btn-sm btn-ghost" onclick="event.stopPropagation();addItem731('+p+',\'source_material_reviewed\',\'\')">+ Add source</button>';
+  h+='<button class="btn btn-sm btn-ghost"'+actionAttrs('add-item',' data-path="source_material_reviewed"')+'>+ Add source</button>';
 
   h+=sec('Section 1 — Medication chart review');
-  h+='<div style="display:flex;align-items:center;gap:8px;margin-bottom:8px"><label style="font-size:13px;color:var(--text-muted);cursor:pointer;display:flex;align-items:center;gap:6px"><input type="checkbox" name="medication_chart_review.reviewed_today"'+(data.medication_chart_review?.reviewed_today?' checked':'')+' onchange="updateField731('+p+',\'medication_chart_review.reviewed_today\',this.checked)" onclick="event.stopPropagation()" style="width:16px;height:16px;cursor:pointer"> Reviewed today</label></div>';
+  h+='<div style="display:flex;align-items:center;gap:8px;margin-bottom:8px"><label style="font-size:13px;color:var(--text-muted);cursor:pointer;display:flex;align-items:center;gap:6px"><input type="checkbox" name="medication_chart_review.reviewed_today"'+(data.medication_chart_review?.reviewed_today?' checked':'')+fieldAttrs('medication_chart_review.reviewed_today')+' style="width:16px;height:16px;cursor:pointer"> Reviewed today</label></div>';
   h+='<div class="input-label">Changes</div>'+inp('medication_chart_review.changes',data.medication_chart_review?.changes,'No changes');
 
   h+=sec('Section 2 — RMMR');
@@ -929,7 +953,7 @@ function renderReviewForm(pid,data){
     h+='<div style="display:flex;align-items:center;gap:8px;margin-bottom:6px"><span style="font-size:13px;color:var(--text-muted);min-width:110px">Completed</span>'+sel('assessments.'+key+'.completed',['Yes','No','Not stated'],a.completed)+'</div>';
     h+='<div class="input-label">Date</div>'+inp('assessments.'+key+'.date',a.date,'e.g. February 2026');
     h+='<div style="display:flex;align-items:center;gap:8px;margin-top:6px;margin-bottom:6px"><span style="font-size:13px;color:var(--text-muted);min-width:200px">Recommendations actioned</span>'+sel('assessments.'+key+'.recommendations_actioned',['Yes','No','Partial','NA'],a.recommendations_actioned)+'</div>';
-    h+='<div class="input-label">Details</div><textarea name="assessments_details" class="keyterms-input" style="min-height:60px;width:100%" oninput="updateField731('+p+',\'assessments.'+key+'.details\',this.value)" onclick="event.stopPropagation()" onkeydown="event.stopPropagation()">'+escHtml(a.details||'')+'</textarea></div>';
+    h+='<div class="input-label">Details</div><textarea name="assessments_details" class="keyterms-input" style="min-height:60px;width:100%"'+fieldAttrs('assessments.'+key+'.details')+'>'+escHtml(a.details||'')+'</textarea></div>';
   });
 
   h+=sec('Section 5 — MDT Case Conference');
@@ -941,9 +965,9 @@ function renderReviewForm(pid,data){
   h+='<div class="input-label">Summary</div>'+inp('health_status_summary',data.health_status_summary);
   h+='<div class="input-label" style="margin-top:8px">Conditions</div>';
   (data.conditions||[]).forEach((c,i)=>{
-    h+='<div style="display:flex;gap:6px;margin-bottom:6px"><input name="conditions" class="input" type="text" value="'+escHtml(c)+'" oninput="updateField731('+p+',\'conditions.'+i+'\',this.value)" onclick="event.stopPropagation()" onkeydown="event.stopPropagation()" style="flex:1"><button class="btn btn-sm" style="background:var(--red-dim);color:var(--red)" onclick="event.stopPropagation();removeItem731('+p+',\'conditions\','+i+')">✕</button></div>';
+    h+='<div style="display:flex;gap:6px;margin-bottom:6px"><input name="conditions" class="input" type="text" value="'+escHtml(c)+'"'+fieldAttrs('conditions.'+i)+' style="flex:1"><button class="btn btn-sm" style="background:var(--red-dim);color:var(--red)"'+actionAttrs('remove-item',' data-path="conditions" data-index="'+i+'"')+'>✕</button></div>';
   });
-  h+='<button class="btn btn-sm btn-ghost" onclick="event.stopPropagation();addItem731('+p+',\'conditions\',\'\')">+ Add condition</button>';
+  h+='<button class="btn btn-sm btn-ghost"'+actionAttrs('add-item',' data-path="conditions"')+'>+ Add condition</button>';
 
   h+=sec('Section 7 — Goals of Care');
   (data.goals||[]).forEach((goal,gi)=>{
@@ -958,35 +982,36 @@ function renderReviewForm(pid,data){
       h+='<div><div class="input-label">Action</div>'+inp('goals.'+gi+'.actions.'+ai+'.action',action.action)+'</div>';
       h+='<div><div class="input-label">Monitoring</div>'+inp('goals.'+gi+'.actions.'+ai+'.monitoring',action.monitoring)+'</div>';
       h+='<div><div class="input-label">Review</div>'+inp('goals.'+gi+'.actions.'+ai+'.review',action.review)+'</div>';
-      h+='</div><button class="btn btn-sm" style="background:var(--red-dim);color:var(--red);font-size:11px" onclick="event.stopPropagation();removeItem731('+p+',\'goals.'+gi+'.actions\','+ai+')">Remove action</button></div>';
+      h+='</div><button class="btn btn-sm" style="background:var(--red-dim);color:var(--red);font-size:11px"'+actionAttrs('remove-item',' data-path="goals.'+gi+'.actions" data-index="'+ai+'"')+'>Remove action</button></div>';
     });
-    h+='<button class="btn btn-sm btn-ghost" style="margin-top:4px" onclick="event.stopPropagation();addAction731('+p+','+gi+')">+ Add action</button>';
-    h+='<div style="margin-top:8px;text-align:right"><button class="btn btn-sm" style="background:var(--red-dim);color:var(--red);font-size:11px" onclick="event.stopPropagation();removeItem731('+p+',\'goals\','+gi+')">Remove goal</button></div></div>';
+    h+='<button class="btn btn-sm btn-ghost" style="margin-top:4px"'+actionAttrs('add-action',' data-goal-index="'+gi+'"')+'>+ Add action</button>';
+    h+='<div style="margin-top:8px;text-align:right"><button class="btn btn-sm" style="background:var(--red-dim);color:var(--red);font-size:11px"'+actionAttrs('remove-item',' data-path="goals" data-index="'+gi+'"')+'>Remove goal</button></div></div>';
   });
-  h+='<button class="btn btn-sm btn-ghost" onclick="event.stopPropagation();addGoal731('+p+')">+ Add goal</button>';
+  h+='<button class="btn btn-sm btn-ghost"'+actionAttrs('add-goal')+'>+ Add goal</button>';
 
   h+=sec('Flags');
   h+='<div class="input-label">Checks to confirm before finalising</div>';
   (data.checks_to_confirm||[]).forEach((item,i)=>{
-    h+='<div style="display:flex;gap:6px;margin-bottom:6px"><input name="checks_to_confirm" class="input" type="text" value="'+escHtml(item)+'" oninput="updateField731('+p+',\'checks_to_confirm.'+i+'\',this.value)" onclick="event.stopPropagation()" onkeydown="event.stopPropagation()" style="flex:1"><button class="btn btn-sm" style="background:var(--amber-dim);color:var(--amber)" onclick="event.stopPropagation();removeItem731('+p+',\'checks_to_confirm\','+i+')">Dismiss</button></div>';
+    h+='<div style="display:flex;gap:6px;margin-bottom:6px"><input name="checks_to_confirm" class="input" type="text" value="'+escHtml(item)+'"'+fieldAttrs('checks_to_confirm.'+i)+' style="flex:1"><button class="btn btn-sm" style="background:var(--amber-dim);color:var(--amber)"'+actionAttrs('remove-item',' data-path="checks_to_confirm" data-index="'+i+'"')+'>Dismiss</button></div>';
   });
-  h+='<button class="btn btn-sm btn-ghost" style="margin-bottom:12px" onclick="event.stopPropagation();addItem731('+p+',\'checks_to_confirm\',\'\')">+ Add check</button>';
+  h+='<button class="btn btn-sm btn-ghost" style="margin-bottom:12px"'+actionAttrs('add-item',' data-path="checks_to_confirm"')+'>+ Add check</button>';
   h+='<div class="input-label">Not documented in source</div>';
   (data.not_documented||[]).forEach((item,i)=>{
-    h+='<div style="display:flex;gap:6px;margin-bottom:6px"><input name="not_documented" class="input" type="text" value="'+escHtml(item)+'" oninput="updateField731('+p+',\'not_documented.'+i+'\',this.value)" onclick="event.stopPropagation()" onkeydown="event.stopPropagation()" style="flex:1"><button class="btn btn-sm" style="background:var(--amber-dim);color:var(--amber)" onclick="event.stopPropagation();removeItem731('+p+',\'not_documented\','+i+')">Dismiss</button></div>';
+    h+='<div style="display:flex;gap:6px;margin-bottom:6px"><input name="not_documented" class="input" type="text" value="'+escHtml(item)+'"'+fieldAttrs('not_documented.'+i)+' style="flex:1"><button class="btn btn-sm" style="background:var(--amber-dim);color:var(--amber)"'+actionAttrs('remove-item',' data-path="not_documented" data-index="'+i+'"')+'>Dismiss</button></div>';
   });
-  h+='<button class="btn btn-sm btn-ghost" onclick="event.stopPropagation();addItem731('+p+',\'not_documented\',\'\')">+ Add item</button>';
+  h+='<button class="btn btn-sm btn-ghost"'+actionAttrs('add-item',' data-path="not_documented"')+'>+ Add item</button>';
 
   h+='<div style="margin-top:16px;padding-top:12px;border-top:1px solid var(--border);display:flex;gap:8px;flex-wrap:wrap">';
-  h+='<button class="btn btn-sm btn-ghost" onclick="event.stopPropagation();cancelReview('+p+')">Cancel</button>';
-  h+='<button class="btn btn-sm" style="background:var(--accent-dim);color:var(--accent)" onclick="event.stopPropagation();reExtract731('+p+')">↻ Re-extract from transcript</button>';
-  h+='<button class="btn btn-sm btn-primary" onclick="event.stopPropagation();generateFinalNote('+p+')">▶ Generate Final Note</button>';
+  h+='<button class="btn btn-sm btn-ghost"'+actionAttrs('cancel-review')+'>Cancel</button>';
+  h+='<button class="btn btn-sm" style="background:var(--accent-dim);color:var(--accent)"'+actionAttrs('reextract')+'>↻ Re-extract from transcript</button>';
+  h+='<button class="btn btn-sm btn-primary"'+actionAttrs('generate-final')+'>▶ Generate Final Note</button>';
   h+='</div>';
   return h;
 }
 
 // ─── Clear Day ───
 async function clearDay(){
+  if(isProcessing){showToast('Processing in progress - please wait');return}
   if(!confirm('Clear all recordings and notes? You can re-select facilities after.'))return;
   for(const[_,rec]of Object.entries(recordings)){if(rec.audioId)try{await deleteBlob(rec.audioId)}catch(e){}}
   recordings={};expandedPatient=null;todayPatients=[];todayFacilities=[];selectedFacilities=new Set();
@@ -1077,7 +1102,7 @@ function renderSelect(){
     const sel=selectedFacilities.has(fac);
     const fp=allPatients.filter(p=>p.facility===fac);
     const wt=fp.filter(p=>p.currentTasks).length;
-    return '<div class="fac-select-item'+(sel?' selected':'')+'" onclick="toggleFacility(\''+fac.replace(/'/g,"\\'")+'\')">'
+    return '<div class="fac-select-item'+(sel?' selected':'')+'" data-facility="'+escHtml(fac)+'">'
       +'<div class="fac-checkbox">'+(sel?'\u2713':'')+'</div>'
       +'<div class="fac-select-info">'
       +'<div class="fac-select-name">'+escHtml(fac||'Unknown')+'</div>'
@@ -1085,6 +1110,9 @@ function renderSelect(){
       +(wt>0?'<div class="fac-select-tasks">'+wt+' with pending tasks</div>':'')
       +'</div></div>';
   }).join('');
+  el.querySelectorAll('.fac-select-item').forEach(item=>{
+    item.addEventListener('click',()=>toggleFacility(item.dataset.facility||''));
+  });
   const btn=document.getElementById('startRoundBtn');
   const n=selectedFacilities.size;
   const tp=allPatients.filter(p=>selectedFacilities.has(p.facility)).length;
@@ -1132,12 +1160,15 @@ function renderHome(){
     let prog='';
     if(ft>0){const pG=(fpd/fp.length)*100;const pA=((fpd+fr)/fp.length)*100;
       prog='<div class="progress-track"><div style="height:100%;border-radius:2px;transition:width 0.3s;background:linear-gradient(90deg,var(--green) '+pG+'%,var(--amber) '+pG+'%,var(--amber) '+pA+'%,transparent '+pA+'%);width:100%"></div></div>';}
-    return '<div class="card card-clickable" onclick="selectedFacility=\''+fac.replace(/'/g,"\\'")+'\';showView(\'facility\')">'
+    return '<div class="card card-clickable" data-facility="'+escHtml(fac)+'">'
       +'<div style="display:flex;justify-content:space-between;align-items:flex-start"><div>'
       +'<div class="fac-name">'+escHtml(fac||'Unknown')+'</div>'
       +'<div class="fac-count">'+fp.length+' patients</div>'
       +'</div><div style="display:flex;gap:6px">'+badges+'</div></div>'+prog+'</div>';
   }).join('');
+  document.querySelectorAll('#facilityList .card-clickable').forEach(card=>{
+    card.addEventListener('click',()=>{selectedFacility=card.dataset.facility||'';showView('facility');});
+  });
 }
 
 function renderFacility(){
@@ -1180,23 +1211,23 @@ function renderFacility(){
       const modeCtrl='<div style="margin-bottom:10px">'
         +'<div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">'
         +'<span style="font-size:12px;color:var(--text-muted);width:68px">Note type:</span>'
-        +'<button class="btn btn-sm" style="'+(noteType==='scribe'?'background:var(--accent);color:#fff':'background:transparent;border:1px solid var(--border);color:var(--text-muted)')+'" onclick="event.stopPropagation();setNoteType(\''+pt.id+'\',\'scribe\')">Scribe</button>'
-        +'<button class="btn btn-sm" style="'+(noteType==='mdcp_731'?'background:var(--accent);color:#fff':'background:transparent;border:1px solid var(--border);color:var(--text-muted)')+'" onclick="event.stopPropagation();setNoteType(\''+pt.id+'\',\'mdcp_731\')">MDCP 731</button>'
+        +'<button class="btn btn-sm" style="'+(noteType==='scribe'?'background:var(--accent);color:#fff':'background:transparent;border:1px solid var(--border);color:var(--text-muted)')+'" data-action="set-note-type" data-patient-id="'+escHtml(pt.id)+'" data-value="scribe">Scribe</button>'
+        +'<button class="btn btn-sm" style="'+(noteType==='mdcp_731'?'background:var(--accent);color:#fff':'background:transparent;border:1px solid var(--border);color:var(--text-muted)')+'" data-action="set-note-type" data-patient-id="'+escHtml(pt.id)+'" data-value="mdcp_731">MDCP 731</button>'
         +'</div>'
         +'<div style="display:flex;align-items:center;gap:8px">'
         +'<span style="font-size:12px;color:var(--text-muted);width:68px">Input:</span>'
-        +'<button class="btn btn-sm" style="'+(inputMode==='audio'?'background:var(--accent);color:#fff':'background:transparent;border:1px solid var(--border);color:var(--text-muted)')+'" onclick="event.stopPropagation();setInputMode(\''+pt.id+'\',\'audio\')">Dictate</button>'
-        +'<button class="btn btn-sm" style="'+(inputMode==='text'?'background:var(--accent);color:#fff':'background:transparent;border:1px solid var(--border);color:var(--text-muted)')+'" onclick="event.stopPropagation();setInputMode(\''+pt.id+'\',\'text\')">Type</button>'
+        +'<button class="btn btn-sm" style="'+(inputMode==='audio'?'background:var(--accent);color:#fff':'background:transparent;border:1px solid var(--border);color:var(--text-muted)')+'" data-action="set-input-mode" data-patient-id="'+escHtml(pt.id)+'" data-value="audio">Dictate</button>'
+        +'<button class="btn btn-sm" style="'+(inputMode==='text'?'background:var(--accent);color:#fff':'background:transparent;border:1px solid var(--border);color:var(--text-muted)')+'" data-action="set-input-mode" data-patient-id="'+escHtml(pt.id)+'" data-value="text">Type</button>'
         +'</div>'
         +'</div>';
       let actionArea='';
       if(inputMode==='text'){
         const tv=escHtml(rec?.textInput||'');
         const hasText=!!(rec?.textInput?.trim());
-        actionArea='<textarea name="textInput" class="keyterms-input" placeholder="Paste or type patient narrative here..." onclick="event.stopPropagation()" onkeydown="event.stopPropagation()" oninput="handleTextInput(\''+pt.id+'\',this.value)" style="min-height:120px;width:100%;margin-bottom:8px;resize:vertical">'+tv+'</textarea>';
-        actionArea+='<div class="controls" id="text-ctrl-'+pt.id+'">';
-        if(hasText&&!isProcessing)actionArea+='<button class="btn btn-sm btn-primary btn-process-single" onclick="event.stopPropagation();processSingle(\''+pt.id+'\')">&#9889; Process this</button>';
-        if(rec?.note&&rec.status==='processed')actionArea+='<button class="btn btn-sm btn-copy" onclick="event.stopPropagation();copyNote(\''+pt.id+'\')">\ud83d\udccb Copy Note</button>';
+        actionArea='<textarea name="textInput" class="keyterms-input" placeholder="Paste or type patient narrative here..." data-text-input="1" data-patient-id="'+escHtml(pt.id)+'" style="min-height:120px;width:100%;margin-bottom:8px;resize:vertical">'+tv+'</textarea>';
+        actionArea+='<div class="controls" id="text-ctrl-'+escHtml(pt.id)+'">';
+        if(hasText&&!isProcessing)actionArea+='<button class="btn btn-sm btn-primary btn-process-single" data-action="process-single" data-patient-id="'+escHtml(pt.id)+'">&#9889; Process this</button>';
+        if(rec?.note&&rec.status==='processed')actionArea+='<button class="btn btn-sm btn-copy" data-action="copy-note" data-patient-id="'+escHtml(pt.id)+'">\ud83d\udccb Copy Note</button>';
         actionArea+='</div>';
       }else{
         let c='';
@@ -1204,19 +1235,19 @@ function renderFacility(){
           const l=rec?.audioId?'Re-record':'Record';
           const st=rec?.audioId?'background:var(--amber-dim);color:var(--amber)':'background:var(--red-dim);color:var(--red)';
           const d=activeRecording&&activeRecording!==pt.id?'disabled':'';
-          c+='<button class="btn btn-sm" style="'+st+'" onclick="event.stopPropagation();startRecording(\''+pt.id+'\')" '+d+'>\u25cf '+l+'</button>';
+          c+='<button class="btn btn-sm" style="'+st+'" data-action="start-recording" data-patient-id="'+escHtml(pt.id)+'" '+d+'>\u25cf '+l+'</button>';
           if(rec?.audioId){
-            c+='<button class="btn btn-sm" style="background:var(--accent-dim);color:var(--accent)" onclick="event.stopPropagation();startRecording(\''+pt.id+'\',true)" '+d+'>+ Append</button>';
+            c+='<button class="btn btn-sm" style="background:var(--accent-dim);color:var(--accent)" data-action="append-recording" data-patient-id="'+escHtml(pt.id)+'" '+d+'>+ Append</button>';
           }
         }else{
-          c+='<button class="btn btn-sm btn-recording" onclick="event.stopPropagation();stopRecording()">\u25a0 Stop ('+fmtTime(recordingTime)+')</button>';
+          c+='<button class="btn btn-sm btn-recording" data-action="stop-recording">\u25a0 Stop ('+fmtTime(recordingTime)+')</button>';
         }
         if(rec?.audioId&&!isR){
-          c+='<button class="btn btn-sm btn-ghost" onclick="event.stopPropagation();playAudio(\''+rec.audioId+'\')">'+(playingAudioId===rec.audioId?'\u23f8 Pause':'\u25b6 Play')+'</button>';
-          c+='<button class="btn btn-sm" style="background:var(--red-dim);color:var(--red)" onclick="event.stopPropagation();deleteRecording(\''+pt.id+'\')">\u2715 Delete</button>';
-          if((rec.status==='recorded'||rec.status==='error')&&!isProcessing)c+='<button class="btn btn-sm btn-primary" onclick="event.stopPropagation();processSingle(\''+pt.id+'\')">&#9889; Transcribe this</button>';
+          c+='<button class="btn btn-sm btn-ghost" data-action="play-audio" data-audio-id="'+escHtml(rec.audioId)+'">'+(playingAudioId===rec.audioId?'\u23f8 Pause':'\u25b6 Play')+'</button>';
+          c+='<button class="btn btn-sm" style="background:var(--red-dim);color:var(--red)" data-action="delete-recording" data-patient-id="'+escHtml(pt.id)+'">\u2715 Delete</button>';
+          if((rec.status==='recorded'||rec.status==='error')&&!isProcessing)c+='<button class="btn btn-sm btn-primary" data-action="process-single" data-patient-id="'+escHtml(pt.id)+'">&#9889; Transcribe this</button>';
         }
-        if(rec?.note&&rec.status==='processed')c+='<button class="btn btn-sm btn-copy" onclick="event.stopPropagation();copyNote(\''+pt.id+'\')">\ud83d\udccb Copy Note</button>';
+        if(rec?.note&&rec.status==='processed')c+='<button class="btn btn-sm btn-copy" data-action="copy-note" data-patient-id="'+escHtml(pt.id)+'">\ud83d\udccb Copy Note</button>';
         actionArea='<div class="controls">'+c+'</div>';
       }
       const guide731=noteType==='mdcp_731'?'<details style="margin-bottom:10px"><summary style="font-size:12px;color:var(--text-muted);cursor:pointer;user-select:none">731 field guide</summary><div style="margin-top:8px;font-size:12px;color:var(--text-muted);line-height:1.6;padding:8px;background:var(--bg);border-radius:6px;border:1px solid var(--border)">'
@@ -1232,17 +1263,81 @@ function renderFacility(){
         +'<div>• <b>Flag</b> anything uncertain or not documented</div>'
         +'</div></details>':'';
       const noteVal=escHtml(patientNotes[pt.id]||'');
-      const noteField='<div style="margin-top:10px"><input name="patientNote" class="input" type="text" placeholder="Add a note/reminder..." value="'+noteVal+'" style="font-family:\'IBM Plex Sans\',sans-serif;font-size:12px;padding:6px 10px" onclick="event.stopPropagation()" onchange="patientNotes[\''+pt.id+'\']=this.value;saveState()" onkeydown="event.stopPropagation()"></div>';
+      const noteField='<div style="margin-top:10px"><input name="patientNote" class="input" type="text" placeholder="Add a note/reminder..." value="'+noteVal+'" data-patient-note="1" data-patient-id="'+escHtml(pt.id)+'" style="font-family:\'IBM Plex Sans\',sans-serif;font-size:12px;padding:6px 10px"></div>';
       const tr=rec?.transcript?'<details><summary>Raw transcript</summary><div class="note-block" style="font-size:12px;color:var(--text-muted)">'+escHtml(rec.transcript)+'</div></details>':'';
       const nh=rec?.note?'<div class="note-block">'+escHtml(rec.note)+'</div>':'';
       ex='<div class="sep">'+modeCtrl+guide731+actionArea+noteField+tr+nh+'</div>';
     }
     return '<div class="'+cls+'">'
-      +'<div style="display:flex;justify-content:space-between;align-items:flex-start;cursor:pointer" onclick="expandedPatient=expandedPatient===\''+pt.id+'\'?null:\''+pt.id+'\';renderFacility()">'
+      +'<div class="patient-toggle" data-patient-id="'+escHtml(pt.id)+'" style="display:flex;justify-content:space-between;align-items:flex-start;cursor:pointer">'
       +'<div style="flex:1"><div style="display:flex;align-items:center"><span class="patient-name">'+escHtml(pt.name)+'</span>'+bh+'</div>'+th+'</div>'
       +'<div style="display:flex;align-items:center;gap:6px">'+sb+'<span style="color:var(--text-muted);font-size:12px;margin-left:4px">'+(isE?'\u25b2':'\u25bc')+'</span></div>'
       +'</div>'+ex+'</div>';
   }).join('');
+  document.querySelectorAll('#patientList .patient-toggle').forEach(row=>{
+    row.addEventListener('click',()=>{
+      const pid=row.dataset.patientId||'';
+      expandedPatient=expandedPatient===pid?null:pid;
+      renderFacility();
+    });
+  });
+  document.querySelectorAll('#patientList [data-action]').forEach(ctrl=>{
+    ctrl.addEventListener('click',async e=>{
+      e.stopPropagation();
+      const pid=ctrl.dataset.patientId||'';
+      const action=ctrl.dataset.action;
+      if(action==='set-note-type')setNoteType(pid,ctrl.dataset.value);
+      if(action==='set-input-mode')setInputMode(pid,ctrl.dataset.value);
+      if(action==='start-recording')startRecording(pid);
+      if(action==='append-recording')startRecording(pid,true);
+      if(action==='stop-recording')stopRecording();
+      if(action==='play-audio')playAudio(ctrl.dataset.audioId);
+      if(action==='delete-recording')deleteRecording(pid);
+      if(action==='process-single')processSingle(pid);
+      if(action==='copy-note')await copyNote(pid);
+    });
+  });
+  document.querySelectorAll('#patientList [data-text-input]').forEach(textarea=>{
+    textarea.addEventListener('click',e=>e.stopPropagation());
+    textarea.addEventListener('keydown',e=>e.stopPropagation());
+    textarea.addEventListener('input',e=>{
+      e.stopPropagation();
+      handleTextInput(textarea.dataset.patientId||'',textarea.value);
+    });
+  });
+  document.querySelectorAll('#patientList [data-patient-note]').forEach(input=>{
+    input.addEventListener('click',e=>e.stopPropagation());
+    input.addEventListener('keydown',e=>e.stopPropagation());
+    input.addEventListener('change',e=>{
+      e.stopPropagation();
+      patientNotes[input.dataset.patientId||'']=input.value;
+      saveState();
+    });
+  });
+  document.querySelectorAll('#patientList [data-mdcp-field]').forEach(field=>{
+    field.addEventListener('click',e=>e.stopPropagation());
+    field.addEventListener('keydown',e=>e.stopPropagation());
+    const update=()=>{
+      const value=field.type==='checkbox'?field.checked:field.value;
+      updateField731(field.dataset.patientId||'',field.dataset.mdcpField||'',value);
+    };
+    field.addEventListener('input',update);
+    field.addEventListener('change',update);
+  });
+  document.querySelectorAll('#patientList [data-mdcp-action]').forEach(ctrl=>{
+    ctrl.addEventListener('click',e=>{
+      e.stopPropagation();
+      const pid=ctrl.dataset.patientId||'';
+      const action=ctrl.dataset.mdcpAction;
+      if(action==='remove-item')removeItem731(pid,ctrl.dataset.path,Number(ctrl.dataset.index));
+      if(action==='add-item')addItem731(pid,ctrl.dataset.path,'');
+      if(action==='add-goal')addGoal731(pid);
+      if(action==='add-action')addAction731(pid,Number(ctrl.dataset.goalIndex));
+      if(action==='cancel-review')cancelReview(pid);
+      if(action==='reextract')reExtract731(pid);
+      if(action==='generate-final')generateFinalNote(pid);
+    });
+  });
 }
 
 function renderReview(){
@@ -1276,12 +1371,11 @@ function renderReview(){
       let bh='';
       if(patient.ward)bh+='<span class="patient-bed">'+escHtml(patient.ward)+'</span>';
       if(patient.bed)bh+='<span class="patient-bed">Bed '+escHtml(patient.bed)+'</span>';
-      const ef=fac.replace(/\\/g,'\\\\').replace(/'/g,"\\'");
       html+='<div class="card">'
         +'<div style="display:flex;justify-content:space-between;align-items:center">'
         +'<div><div style="display:flex;align-items:center;flex-wrap:wrap"><span class="patient-name">'+escHtml(patient.name)+'</span>'+bh+'</div>'
         +'<div style="font-size:12px;color:var(--text-muted);margin-top:2px">'+escHtml(fac)+'</div></div>'
-        +'<button class="btn btn-sm" style="background:var(--accent-dim);color:var(--accent);white-space:nowrap" onclick="selectedFacility=\''+ef+'\';expandedPatient=\''+pid+'\';showView(\'facility\')">Complete Review \u2192</button>'
+        +'<button class="btn btn-sm" style="background:var(--accent-dim);color:var(--accent);white-space:nowrap" data-review-action="complete-review" data-facility="'+escHtml(fac)+'" data-patient-id="'+escHtml(pid)+'">Complete Review \u2192</button>'
         +'</div></div>';
     }
     if(pendingNotes.length>0||doneEntries.length>0)html+='<div style="height:8px"></div>';
@@ -1320,7 +1414,7 @@ function renderReview(){
       const cardClass=isErr?' card-recording':isDone?'':' card-processed';
       const btnHtml=isDone
         ?'<span class="badge badge-green">\u2713 Done</span>'
-        :'<button class="btn btn-sm btn-copy" onclick="copyNote(\''+pid+'\')">\ud83d\udccb Copy</button>';
+        :'<button class="btn btn-sm btn-copy" data-review-action="copy-note" data-patient-id="'+escHtml(pid)+'">\ud83d\udccb Copy</button>';
       html+='<div class="card'+cardClass+'"'+cardStyle+'>'
         +'<div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:8px">'
         +'<div><div style="display:flex;align-items:center;flex-wrap:wrap"><span class="patient-name">'+escHtml(patient.name)+'</span>'+bh+'</div></div>'
@@ -1331,6 +1425,18 @@ function renderReview(){
     }
   }
   reviewEl.innerHTML=html;
+  reviewEl.querySelectorAll('[data-review-action]').forEach(ctrl=>{
+    ctrl.addEventListener('click',async e=>{
+      e.stopPropagation();
+      const action=ctrl.dataset.reviewAction;
+      if(action==='complete-review'){
+        selectedFacility=ctrl.dataset.facility||'';
+        expandedPatient=ctrl.dataset.patientId||'';
+        showView('facility');
+      }
+      if(action==='copy-note')await copyNote(ctrl.dataset.patientId||'');
+    });
+  });
 }
 
 function renderSettings(){
@@ -1338,6 +1444,33 @@ function renderSettings(){
   document.getElementById('anthropicKey').value=localStorage.getItem('dr_anthropicKey')||'';
   document.getElementById('keytermsInput').value=localStorage.getItem('dr_keyterms')||'';
   document.getElementById('promptPreview').textContent=SCRIBE_PROMPT.slice(0,600)+'...';
+}
+
+function bindStaticControls(){
+  document.getElementById('settingsBtn').addEventListener('click',()=>showView('settings'));
+  const dropzone=document.getElementById('dropzone');
+  dropzone.addEventListener('click',()=>document.getElementById('fileInput').click());
+  dropzone.addEventListener('dragover',e=>{e.preventDefault();dropzone.classList.add('drag-over');});
+  dropzone.addEventListener('dragleave',()=>dropzone.classList.remove('drag-over'));
+  dropzone.addEventListener('drop',handleDrop);
+  document.getElementById('fileInput').addEventListener('change',handleFileSelect);
+  document.getElementById('fileInput2').addEventListener('change',handleFileSelect);
+  document.getElementById('reimportBtn').addEventListener('click',()=>document.getElementById('fileInput2').click());
+  document.getElementById('startRoundBtn').addEventListener('click',startRound);
+  document.getElementById('changeFacilitiesBtn').addEventListener('click',backToSelect);
+  document.getElementById('processAllBtn').addEventListener('click',()=>batchProcess());
+  document.getElementById('retryFailedBtn').addEventListener('click',()=>batchProcess(true));
+  document.getElementById('retryFailedReviewBtn').addEventListener('click',()=>batchProcess(true));
+  document.getElementById('reviewNotesBtn').addEventListener('click',()=>showView('review'));
+  document.getElementById('exportAudioBtn').addEventListener('click',exportAllAudio);
+  document.getElementById('clearDayBtn').addEventListener('click',clearDay);
+  document.getElementById('facilityBackBtn').addEventListener('click',()=>showView('home'));
+  document.getElementById('reviewBackBtn').addEventListener('click',()=>showView('home'));
+  document.getElementById('settingsBackBtn').addEventListener('click',goBackFromSettings);
+  document.getElementById('patientSearch').addEventListener('input',e=>{searchQuery=e.target.value;renderFacility();});
+  document.getElementById('deepgramKey').addEventListener('change',e=>localStorage.setItem('dr_deepgramKey',e.target.value));
+  document.getElementById('anthropicKey').addEventListener('change',e=>localStorage.setItem('dr_anthropicKey',e.target.value));
+  document.getElementById('keytermsInput').addEventListener('change',e=>localStorage.setItem('dr_keyterms',e.target.value));
 }
 
 // ─── Hotkeys ───
@@ -1361,6 +1494,7 @@ document.addEventListener('keydown',(e)=>{
 
 // ─── Init ───
 loadState();
+bindStaticControls();
 showView(getInitialView());
 </script>
 </body>
