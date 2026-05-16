@@ -438,6 +438,13 @@ function saveTodayState(){localStorage.setItem('dr_selectedFacilities',JSON.stri
 function loadState(){
   try{
     const r=localStorage.getItem('dr_recordings');if(r)recordings=JSON.parse(r);
+    // Apply defaults for new fields in memory — does not write back to localStorage
+    for(const rec of Object.values(recordings)){
+      if(!rec.noteType)rec.noteType='scribe';
+      if(!rec.inputMode)rec.inputMode='audio';
+      if(rec.textInput===undefined)rec.textInput=null;
+      if(rec.structuredData===undefined)rec.structuredData=null;
+    }
     const pn=localStorage.getItem('dr_patientNotes');if(pn)patientNotes=JSON.parse(pn);
     const p=localStorage.getItem('dr_allPatients');if(p){allPatients=JSON.parse(p);allFacilities=[...new Set(allPatients.map(x=>x.facility))];}
     const sf=localStorage.getItem('dr_selectedFacilities');if(sf)selectedFacilities=new Set(JSON.parse(sf));
@@ -548,7 +555,8 @@ async function startRecording(pid,append){
       }
       const aid='audio_'+pid+'_'+Date.now();
       await saveBlob(aid,finalBlob);
-      recordings[pid]={...(recordings[pid]||{}),audioId:aid,duration:finalDuration,status:'recorded',note:null,transcript:null};
+      const prev=recordings[pid]||{};
+      recordings[pid]={...prev,audioId:aid,duration:finalDuration,status:'recorded',note:null,transcript:null,noteType:prev.noteType||'scribe',inputMode:'audio',textInput:null,structuredData:null};
       activeRecording=null;recordingTime=0;appendMode=false;clearInterval(recordingTimer);saveState();renderFacility();
     };
     mediaRecorder.start(1000);activeRecording=pid;recordingTime=0;
