@@ -582,9 +582,12 @@ async function playAudio(aid){
 
 function copyNote(pid){
   if(recordings[pid]?.note){
-    // Strip extra blank lines between headings and content
-    const cleaned=recordings[pid].note.replace(/(History Of Presenting Illness|Examination|Plan)\n\n+/g,'$1\n');
-    navigator.clipboard.writeText(cleaned);
+    const noteType=recordings[pid]?.noteType||'scribe';
+    let text=recordings[pid].note;
+    if(noteType==='scribe'){
+      text=text.replace(/(History Of Presenting Illness|Examination|Plan)\n\n+/g,'$1\n');
+    }
+    navigator.clipboard.writeText(text);
     recordings[pid].status='done';
     saveState();
     showToast('Note copied and marked as done');
@@ -1211,6 +1214,7 @@ function renderFacility(){
         if(rec?.audioId&&!isR){
           c+='<button class="btn btn-sm btn-ghost" onclick="event.stopPropagation();playAudio(\''+rec.audioId+'\')">'+(playingAudioId===rec.audioId?'\u23f8 Pause':'\u25b6 Play')+'</button>';
           c+='<button class="btn btn-sm" style="background:var(--red-dim);color:var(--red)" onclick="event.stopPropagation();deleteRecording(\''+pt.id+'\')">\u2715 Delete</button>';
+          if((rec.status==='recorded'||rec.status==='error')&&!isProcessing)c+='<button class="btn btn-sm btn-primary" onclick="event.stopPropagation();processSingle(\''+pt.id+'\')">&#9889; Transcribe this</button>';
         }
         if(rec?.note&&rec.status==='processed')c+='<button class="btn btn-sm btn-copy" onclick="event.stopPropagation();copyNote(\''+pt.id+'\')">\ud83d\udccb Copy Note</button>';
         actionArea='<div class="controls">'+c+'</div>';
@@ -1306,6 +1310,7 @@ function renderSettings(){
 document.addEventListener('keydown',(e)=>{
   if(e.target.tagName==='INPUT'||e.target.tagName==='TEXTAREA')return;
   if(document.getElementById('view-facility').style.display==='none')return;
+  if(recordings[expandedPatient]?.status==='awaiting_review')return;
   // R = start recording on expanded patient
   if((e.key==='r'||e.key==='R')&&!activeRecording&&expandedPatient){
     e.preventDefault();startRecording(expandedPatient);
