@@ -1219,11 +1219,23 @@ function renderFacility(){
         if(rec?.note&&rec.status==='processed')c+='<button class="btn btn-sm btn-copy" onclick="event.stopPropagation();copyNote(\''+pt.id+'\')">\ud83d\udccb Copy Note</button>';
         actionArea='<div class="controls">'+c+'</div>';
       }
+      const guide731=noteType==='mdcp_731'?'<details style="margin-bottom:10px"><summary style="font-size:12px;color:var(--text-muted);cursor:pointer;user-select:none">731 field guide</summary><div style="margin-top:8px;font-size:12px;color:var(--text-muted);line-height:1.6;padding:8px;background:var(--bg);border-radius:6px;border:1px solid var(--border)">'
+        +'<div style="font-weight:600;margin-bottom:6px;color:var(--text)">Cover these fields:</div>'
+        +'<div style="margin-bottom:4px">• <b>Source material</b> reviewed (care plan, progress notes, Allied Health reports)</div>'
+        +'<div style="margin-bottom:4px">• <b>Medication chart</b> — reviewed today? any changes?</div>'
+        +'<div style="margin-bottom:4px">• <b>RMMR</b> — completed or due? date?</div>'
+        +'<div style="margin-bottom:4px">• <b>Immunisations</b> — influenza, pneumococcal, COVID booster, shingles, RSV, ADT</div>'
+        +'<div style="margin-bottom:4px">• <b>Assessments</b> — CMA (GP) and CGA (geriatrician): completed? date? recommendations actioned?</div>'
+        +'<div style="margin-bottom:4px">• <b>MDT case conference</b> — recent? date? goals met?</div>'
+        +'<div style="margin-bottom:4px">• <b>Health status</b> summary and active conditions</div>'
+        +'<div style="margin-bottom:4px">• <b>Goals of care</b> — per condition: goal, provider actions, monitoring, review date</div>'
+        +'<div>• <b>Flag</b> anything uncertain or not documented</div>'
+        +'</div></details>':'';
       const noteVal=escHtml(patientNotes[pt.id]||'');
       const noteField='<div style="margin-top:10px"><input name="patientNote" class="input" type="text" placeholder="Add a note/reminder..." value="'+noteVal+'" style="font-family:\'IBM Plex Sans\',sans-serif;font-size:12px;padding:6px 10px" onclick="event.stopPropagation()" onchange="patientNotes[\''+pt.id+'\']=this.value;saveState()" onkeydown="event.stopPropagation()"></div>';
       const tr=rec?.transcript?'<details><summary>Raw transcript</summary><div class="note-block" style="font-size:12px;color:var(--text-muted)">'+escHtml(rec.transcript)+'</div></details>':'';
       const nh=rec?.note?'<div class="note-block">'+escHtml(rec.note)+'</div>':'';
-      ex='<div class="sep">'+modeCtrl+actionArea+noteField+tr+nh+'</div>';
+      ex='<div class="sep">'+modeCtrl+guide731+actionArea+noteField+tr+nh+'</div>';
     }
     return '<div class="'+cls+'">'
       +'<div style="display:flex;justify-content:space-between;align-items:flex-start;cursor:pointer" onclick="expandedPatient=expandedPatient===\''+pt.id+'\'?null:\''+pt.id+'\';renderFacility()">'
