@@ -189,17 +189,17 @@
     <button class="icon-btn" onclick="goBackFromSettings()" style="margin-bottom:16px">&larr; Back</button>
     <div style="font-size:22px;font-weight:700;margin-bottom:20px">Settings</div>
     <div class="settings-section">
-      <label class="input-label">Deepgram API Key (for transcription)</label>
+      <label class="input-label" for="deepgramKey">Deepgram API Key (for transcription)</label>
       <input class="input" type="password" placeholder="your deepgram api key" id="deepgramKey" onchange="localStorage.setItem('dr_deepgramKey',this.value)">
       <div class="input-hint">Used for Nova-3 Medical speech-to-text. Free $200 credit at deepgram.com</div>
     </div>
     <div class="settings-section">
-      <label class="input-label">Anthropic API Key (for note structuring)</label>
+      <label class="input-label" for="anthropicKey">Anthropic API Key (for note structuring)</label>
       <input class="input" type="password" placeholder="sk-ant-..." id="anthropicKey" onchange="localStorage.setItem('dr_anthropicKey',this.value)">
       <div class="input-hint">Used for Claude Sonnet post-processing of transcripts</div>
     </div>
     <div class="settings-section">
-      <label class="input-label">Deepgram Keyterm Prompts (one per line)</label>
+      <label class="input-label" for="keytermsInput">Deepgram Keyterm Prompts (one per line)</label>
       <textarea class="keyterms-input" id="keytermsInput" placeholder="RMMR&#10;RACF&#10;bisoprolol&#10;polypharmacy&#10;PIP QI" onchange="localStorage.setItem('dr_keyterms',this.value)"></textarea>
       <div class="input-hint">Medical terms Deepgram should prioritise. Up to 100 terms supported.</div>
     </div>
@@ -717,7 +717,7 @@ async function processOne(pid,rec,dgKey,anKey,kt){
     const toolBlock=stD.content?.find(b=>b.type==='tool_use'&&b.name==='submit_mdcp_731');
     if(!toolBlock)throw new Error('731: no tool_use block in response');
     const structuredData=toolBlock.input;
-    return{transcript,structuredData,note:renderMdcp731(structuredData)};
+    return{transcript,structuredData,note:null};
   }
   const stR=await fetch('https://api.anthropic.com/v1/messages',{method:'POST',headers:{'Content-Type':'application/json','x-api-key':anKey,'anthropic-version':'2023-06-01','anthropic-dangerous-direct-browser-access':'true'},body:JSON.stringify({model:'claude-sonnet-4-20250514',max_tokens:2000,system:SCRIBE_PROMPT,messages:[{role:'user',content:transcript}]})});
   if(!stR.ok)throw new Error('Anthropic: '+stR.status+' '+(await stR.text()));
@@ -748,7 +748,11 @@ async function batchProcess(retryMode){
     const promises=batch.map(async([pid,rec])=>{
       try{
         const result=await processOne(pid,rec,dgKey,anKey,kt);
-        recordings[pid]={...recordings[pid],note:result.note,transcript:result.transcript,structuredData:result.structuredData||null,status:'processed'};
+        if(result.structuredData){
+          recordings[pid]={...recordings[pid],transcript:result.transcript,structuredData:result.structuredData,note:null,status:'awaiting_review'};
+        }else{
+          recordings[pid]={...recordings[pid],note:result.note,transcript:result.transcript,structuredData:null,status:'processed'};
+        }
         successCount++;
       }catch(err){
         recordings[pid]={...recordings[pid],note:'Error: '+err.message,status:'error'};
@@ -786,6 +790,19 @@ function handleTextInput(pid,value){
   const prev=recordings[pid]||{noteType:'scribe',inputMode:'text',audioId:null,duration:0,note:null,transcript:null,structuredData:null};
   recordings[pid]={...prev,inputMode:'text',textInput:value||null,status:value.trim()?'text-ready':(prev.audioId?'recorded':null)};
   saveState();
+  const ctrl=document.getElementById('text-ctrl-'+pid);
+  if(!ctrl)return;
+  const hasText=!!(value&&value.trim());
+  let btn=ctrl.querySelector('.btn-process-single');
+  if(hasText&&!btn){
+    btn=document.createElement('button');
+    btn.className='btn btn-sm btn-primary btn-process-single';
+    btn.innerHTML='&#9889; Process this';
+    btn.onclick=e=>{e.stopPropagation();processSingle(pid);};
+    ctrl.insertBefore(btn,ctrl.firstChild);
+  }else if(!hasText&&btn){
+    btn.remove();
+  }
 }
 
 async function processSingle(pid){
@@ -801,12 +818,168 @@ async function processSingle(pid){
   ind.style.display='inline';ind.textContent='Processing...';
   try{
     const result=await processOne(pid,rec,dgKey,anKey,kt);
-    recordings[pid]={...recordings[pid],note:result.note,transcript:result.transcript,structuredData:result.structuredData||null,status:'processed'};
+    if(result.structuredData){
+      recordings[pid]={...recordings[pid],transcript:result.transcript,structuredData:result.structuredData,note:null,status:'awaiting_review'};
+    }else{
+      recordings[pid]={...recordings[pid],note:result.note,transcript:result.transcript,structuredData:null,status:'processed'};
+    }
   }catch(err){
     recordings[pid]={...recordings[pid],status:'error',note:'Error: '+err.message};
   }
   isProcessing=false;ind.style.display='none';
   saveState();renderFacility();
+}
+
+// ─── 731 Review helpers ───
+function updateField731(pid,path,value){
+  let obj=recordings[pid].structuredData;
+  const parts=path.split('.');
+  for(let i=0;i<parts.length-1;i++){const k=parts[i];obj=obj[isNaN(k)?k:+k];}
+  const last=parts[parts.length-1];obj[isNaN(last)?last:+last]=value;
+  saveState();
+}
+
+function removeItem731(pid,path,idx){
+  let obj=recordings[pid].structuredData;
+  for(const k of path.split('.'))obj=obj[isNaN(k)?k:+k];
+  obj.splice(idx,1);saveState();renderFacility();
+}
+
+function addItem731(pid,path,item){
+  let obj=recordings[pid].structuredData;
+  for(const k of path.split('.'))obj=obj[isNaN(k)?k:+k];
+  obj.push(item);saveState();renderFacility();
+}
+
+function addGoal731(pid){
+  recordings[pid].structuredData.goals.push({condition:'',goal:'',actions:[{provider:'',action:'',monitoring:'',review:''}]});
+  saveState();renderFacility();
+}
+
+function addAction731(pid,gi){
+  recordings[pid].structuredData.goals[gi].actions.push({provider:'',action:'',monitoring:'',review:''});
+  saveState();renderFacility();
+}
+
+function generateFinalNote(pid){
+  const data=recordings[pid]?.structuredData;if(!data)return;
+  recordings[pid].note=renderMdcp731(data);recordings[pid].status='processed';
+  saveState();renderFacility();
+}
+
+async function reExtract731(pid){
+  const anKey=localStorage.getItem('dr_anthropicKey');
+  const rec=recordings[pid];
+  if(!rec||!anKey){showView('settings');showToast('Please set Anthropic API key first');return}
+  const transcript=rec.transcript||rec.textInput;
+  if(!transcript?.trim()){showToast('No transcript to re-extract from');return}
+  isProcessing=true;
+  const ind=document.getElementById('processingIndicator');
+  ind.style.display='inline';ind.textContent='Re-extracting...';
+  try{
+    const stR=await fetch('https://api.anthropic.com/v1/messages',{method:'POST',headers:{'Content-Type':'application/json','x-api-key':anKey,'anthropic-version':'2023-06-01','anthropic-dangerous-direct-browser-access':'true'},body:JSON.stringify({model:'claude-sonnet-4-20250514',max_tokens:4096,system:MDCP_731_PROMPT,tools:[MDCP_731_TOOL_SPEC],tool_choice:{type:'tool',name:'submit_mdcp_731'},messages:[{role:'user',content:transcript}]})});
+    if(!stR.ok)throw new Error('Anthropic: '+stR.status+' '+(await stR.text()));
+    const stD=await stR.json();
+    const toolBlock=stD.content?.find(b=>b.type==='tool_use'&&b.name==='submit_mdcp_731');
+    if(!toolBlock)throw new Error('731: no tool_use block in response');
+    recordings[pid]={...recordings[pid],structuredData:toolBlock.input,status:'awaiting_review',note:null};
+  }catch(err){showToast('Re-extract failed: '+err.message);}
+  isProcessing=false;ind.style.display='none';
+  saveState();renderFacility();
+}
+
+function cancelReview(pid){expandedPatient=null;renderFacility();}
+
+function renderReviewForm(pid,data){
+  const p="'"+pid+"'";
+  const sec=t=>'<div style="font-size:11px;font-weight:600;color:var(--text-muted);margin:16px 0 8px;padding-bottom:4px;border-bottom:1px solid var(--border);text-transform:uppercase;letter-spacing:0.5px">'+t+'</div>';
+  const inp=(path,val,ph)=>'<input name="'+path+'" class="input" type="text" value="'+escHtml(val||'')+'" placeholder="'+escHtml(ph||'')+'" oninput="updateField731('+p+',\''+path+'\',this.value)" onclick="event.stopPropagation()" onkeydown="event.stopPropagation()">';
+  const sel=(path,opts,cur)=>'<select name="'+path+'" class="input" style="width:auto;display:inline-block" onchange="updateField731('+p+',\''+path+'\',this.value)">'+opts.map(o=>'<option'+(o===cur?' selected':'')+'>'+escHtml(o)+'</option>').join('')+'</select>';
+  let h='';
+
+  h+=sec('Source material reviewed');
+  (data.source_material_reviewed||[]).forEach((item,i)=>{
+    h+='<div style="display:flex;gap:6px;margin-bottom:6px"><input name="source_material_reviewed" class="input" type="text" value="'+escHtml(item)+'" oninput="updateField731('+p+',\'source_material_reviewed.'+i+'\',this.value)" onclick="event.stopPropagation()" onkeydown="event.stopPropagation()" style="flex:1"><button class="btn btn-sm" style="background:var(--red-dim);color:var(--red)" onclick="event.stopPropagation();removeItem731('+p+',\'source_material_reviewed\','+i+')">✕</button></div>';
+  });
+  h+='<button class="btn btn-sm btn-ghost" onclick="event.stopPropagation();addItem731('+p+',\'source_material_reviewed\',\'\')">+ Add source</button>';
+
+  h+=sec('Section 1 — Medication chart review');
+  h+='<div style="display:flex;align-items:center;gap:8px;margin-bottom:8px"><label style="font-size:13px;color:var(--text-muted);cursor:pointer;display:flex;align-items:center;gap:6px"><input type="checkbox" name="medication_chart_review.reviewed_today"'+(data.medication_chart_review?.reviewed_today?' checked':'')+' onchange="updateField731('+p+',\'medication_chart_review.reviewed_today\',this.checked)" onclick="event.stopPropagation()" style="width:16px;height:16px;cursor:pointer"> Reviewed today</label></div>';
+  h+='<div class="input-label">Changes</div>'+inp('medication_chart_review.changes',data.medication_chart_review?.changes,'No changes');
+
+  h+=sec('Section 2 — RMMR');
+  h+='<div style="margin-bottom:8px"><div class="input-label">Status</div>'+sel('rmmr.status',['Completed','Due','Not stated'],data.rmmr?.status)+'</div>';
+  h+='<div class="input-label">Date</div>'+inp('rmmr.date',data.rmmr?.date,'e.g. January 2026');
+
+  h+=sec('Section 3 — Immunisations');
+  h+='<div class="input-label">Source</div>'+inp('immunisations.source',data.immunisations?.source,'e.g. AIR, RACH record');
+  const immOpts=['Up to date','DUE','Not stated'];
+  [['influenza_current_year','Influenza (current year)'],['pneumococcal','Pneumococcal'],['covid_booster','COVID booster'],['shingles','Shingles'],['rsv','RSV']].forEach(([f,l])=>{
+    h+='<div style="display:flex;align-items:center;gap:8px;margin-top:6px"><span style="font-size:13px;color:var(--text-muted);min-width:160px">'+l+'</span>'+sel('immunisations.'+f,immOpts,data.immunisations?.[f])+'</div>';
+  });
+  h+='<div style="display:flex;align-items:center;gap:8px;margin-top:6px"><span style="font-size:13px;color:var(--text-muted);min-width:160px">ADT</span>'+sel('immunisations.adt',['Up to date','DUE if sustains tetanus prone wound','Not stated'],data.immunisations?.adt)+'</div>';
+
+  h+=sec('Section 4 — Assessments');
+  [['cma_gp','CMA (GP)'],['cga_geriatrician','CGA (Geriatrician)']].forEach(([key,label])=>{
+    const a=data.assessments?.[key]||{};
+    h+='<div style="margin-bottom:10px"><div style="font-size:13px;font-weight:600;margin-bottom:6px">'+label+'</div>';
+    h+='<div style="display:flex;align-items:center;gap:8px;margin-bottom:6px"><span style="font-size:13px;color:var(--text-muted);min-width:110px">Completed</span>'+sel('assessments.'+key+'.completed',['Yes','No','Not stated'],a.completed)+'</div>';
+    h+='<div class="input-label">Date</div>'+inp('assessments.'+key+'.date',a.date,'e.g. February 2026');
+    h+='<div style="display:flex;align-items:center;gap:8px;margin-top:6px;margin-bottom:6px"><span style="font-size:13px;color:var(--text-muted);min-width:200px">Recommendations actioned</span>'+sel('assessments.'+key+'.recommendations_actioned',['Yes','No','Partial','NA'],a.recommendations_actioned)+'</div>';
+    h+='<div class="input-label">Details</div><textarea name="assessments_details" class="keyterms-input" style="min-height:60px;width:100%" oninput="updateField731('+p+',\'assessments.'+key+'.details\',this.value)" onclick="event.stopPropagation()" onkeydown="event.stopPropagation()">'+escHtml(a.details||'')+'</textarea></div>';
+  });
+
+  h+=sec('Section 5 — MDT Case Conference');
+  h+='<div style="display:flex;align-items:center;gap:8px;margin-bottom:6px"><span style="font-size:13px;color:var(--text-muted);min-width:80px">Recent</span>'+sel('mdt_case_conference.recent',['Yes','No','Not stated'],data.mdt_case_conference?.recent)+'</div>';
+  h+='<div class="input-label">Date</div>'+inp('mdt_case_conference.date',data.mdt_case_conference?.date,'e.g. March 2026');
+  h+='<div style="display:flex;align-items:center;gap:8px;margin-top:6px"><span style="font-size:13px;color:var(--text-muted);min-width:80px">Goals met</span>'+sel('mdt_case_conference.goals_met',['Yes','No','Partial','NA'],data.mdt_case_conference?.goals_met)+'</div>';
+
+  h+=sec('Section 6 — Health status & conditions');
+  h+='<div class="input-label">Summary</div>'+inp('health_status_summary',data.health_status_summary);
+  h+='<div class="input-label" style="margin-top:8px">Conditions</div>';
+  (data.conditions||[]).forEach((c,i)=>{
+    h+='<div style="display:flex;gap:6px;margin-bottom:6px"><input name="conditions" class="input" type="text" value="'+escHtml(c)+'" oninput="updateField731('+p+',\'conditions.'+i+'\',this.value)" onclick="event.stopPropagation()" onkeydown="event.stopPropagation()" style="flex:1"><button class="btn btn-sm" style="background:var(--red-dim);color:var(--red)" onclick="event.stopPropagation();removeItem731('+p+',\'conditions\','+i+')">✕</button></div>';
+  });
+  h+='<button class="btn btn-sm btn-ghost" onclick="event.stopPropagation();addItem731('+p+',\'conditions\',\'\')">+ Add condition</button>';
+
+  h+=sec('Section 7 — Goals of Care');
+  (data.goals||[]).forEach((goal,gi)=>{
+    h+='<div style="background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:12px;margin-bottom:10px">';
+    h+='<div class="input-label">Condition</div>'+inp('goals.'+gi+'.condition',goal.condition);
+    h+='<div class="input-label" style="margin-top:8px">Goal</div>'+inp('goals.'+gi+'.goal',goal.goal);
+    h+='<div class="input-label" style="margin-top:8px">Actions</div>';
+    (goal.actions||[]).forEach((action,ai)=>{
+      h+='<div style="border:1px solid var(--border);border-radius:6px;padding:8px;margin-bottom:6px">';
+      h+='<div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-bottom:6px">';
+      h+='<div><div class="input-label">Provider</div>'+inp('goals.'+gi+'.actions.'+ai+'.provider',action.provider)+'</div>';
+      h+='<div><div class="input-label">Action</div>'+inp('goals.'+gi+'.actions.'+ai+'.action',action.action)+'</div>';
+      h+='<div><div class="input-label">Monitoring</div>'+inp('goals.'+gi+'.actions.'+ai+'.monitoring',action.monitoring)+'</div>';
+      h+='<div><div class="input-label">Review</div>'+inp('goals.'+gi+'.actions.'+ai+'.review',action.review)+'</div>';
+      h+='</div><button class="btn btn-sm" style="background:var(--red-dim);color:var(--red);font-size:11px" onclick="event.stopPropagation();removeItem731('+p+',\'goals.'+gi+'.actions\','+ai+')">Remove action</button></div>';
+    });
+    h+='<button class="btn btn-sm btn-ghost" style="margin-top:4px" onclick="event.stopPropagation();addAction731('+p+','+gi+')">+ Add action</button>';
+    h+='<div style="margin-top:8px;text-align:right"><button class="btn btn-sm" style="background:var(--red-dim);color:var(--red);font-size:11px" onclick="event.stopPropagation();removeItem731('+p+',\'goals\','+gi+')">Remove goal</button></div></div>';
+  });
+  h+='<button class="btn btn-sm btn-ghost" onclick="event.stopPropagation();addGoal731('+p+')">+ Add goal</button>';
+
+  h+=sec('Flags');
+  h+='<div class="input-label">Checks to confirm before finalising</div>';
+  (data.checks_to_confirm||[]).forEach((item,i)=>{
+    h+='<div style="display:flex;gap:6px;margin-bottom:6px"><input name="checks_to_confirm" class="input" type="text" value="'+escHtml(item)+'" oninput="updateField731('+p+',\'checks_to_confirm.'+i+'\',this.value)" onclick="event.stopPropagation()" onkeydown="event.stopPropagation()" style="flex:1"><button class="btn btn-sm" style="background:var(--amber-dim);color:var(--amber)" onclick="event.stopPropagation();removeItem731('+p+',\'checks_to_confirm\','+i+')">Dismiss</button></div>';
+  });
+  h+='<button class="btn btn-sm btn-ghost" style="margin-bottom:12px" onclick="event.stopPropagation();addItem731('+p+',\'checks_to_confirm\',\'\')">+ Add check</button>';
+  h+='<div class="input-label">Not documented in source</div>';
+  (data.not_documented||[]).forEach((item,i)=>{
+    h+='<div style="display:flex;gap:6px;margin-bottom:6px"><input name="not_documented" class="input" type="text" value="'+escHtml(item)+'" oninput="updateField731('+p+',\'not_documented.'+i+'\',this.value)" onclick="event.stopPropagation()" onkeydown="event.stopPropagation()" style="flex:1"><button class="btn btn-sm" style="background:var(--amber-dim);color:var(--amber)" onclick="event.stopPropagation();removeItem731('+p+',\'not_documented\','+i+')">Dismiss</button></div>';
+  });
+  h+='<button class="btn btn-sm btn-ghost" onclick="event.stopPropagation();addItem731('+p+',\'not_documented\',\'\')">+ Add item</button>';
+
+  h+='<div style="margin-top:16px;padding-top:12px;border-top:1px solid var(--border);display:flex;gap:8px;flex-wrap:wrap">';
+  h+='<button class="btn btn-sm btn-ghost" onclick="event.stopPropagation();cancelReview('+p+')">Cancel</button>';
+  h+='<button class="btn btn-sm" style="background:var(--accent-dim);color:var(--accent)" onclick="event.stopPropagation();reExtract731('+p+')">↻ Re-extract from transcript</button>';
+  h+='<button class="btn btn-sm btn-primary" onclick="event.stopPropagation();generateFinalNote('+p+')">▶ Generate Final Note</button>';
+  h+='</div>';
+  return h;
 }
 
 // ─── Clear Day ───
@@ -918,6 +1091,7 @@ function renderSelect(){
 
 function renderHome(){
   const recorded=Object.values(recordings).filter(r=>r.status==='recorded'||r.status==='text-ready').length;
+  const awaitingReview=Object.values(recordings).filter(r=>r.status==='awaiting_review').length;
   const processed=Object.values(recordings).filter(r=>r.status==='processed').length;
   const done=Object.values(recordings).filter(r=>r.status==='done').length;
   const failed=Object.values(recordings).filter(r=>r.status==='error').length;
@@ -927,6 +1101,7 @@ function renderHome(){
   if(totalRecs>0){
     const parts=[];
     if(recorded>0)parts.push(recorded+' pending');
+    if(awaitingReview>0)parts.push(awaitingReview+' to review');
     if(processed>0)parts.push(processed+' to copy');
     if(done>0)parts.push(done+' done');
     if(failed>0)parts.push(failed+' failed');
@@ -945,7 +1120,7 @@ function renderHome(){
   document.getElementById('clearDayBtn').style.display=totalRecs>0?'inline-flex':'none';
   document.getElementById('facilityList').innerHTML=todayFacilities.map(fac=>{
     const fp=todayPatients.filter(p=>p.facility===fac);
-    const fr=fp.filter(p=>['recorded','text-ready'].includes(recordings[p.id]?.status)).length;
+    const fr=fp.filter(p=>['recorded','text-ready','awaiting_review'].includes(recordings[p.id]?.status)).length;
     const fpd=fp.filter(p=>recordings[p.id]?.status==='processed').length;
     const ft=fp.filter(p=>recordings[p.id]).length;
     let badges='';
@@ -965,7 +1140,7 @@ function renderHome(){
 function renderFacility(){
   const allFp=todayPatients.filter(p=>p.facility===selectedFacility);
   const fp=searchQuery?allFp.filter(p=>p.name.toLowerCase().includes(searchQuery.toLowerCase())):allFp;
-  const fr=allFp.filter(p=>['recorded','text-ready'].includes(recordings[p.id]?.status)).length;
+  const fr=allFp.filter(p=>['recorded','text-ready','awaiting_review'].includes(recordings[p.id]?.status)).length;
   const fpd=allFp.filter(p=>recordings[p.id]?.status==='processed').length;
   const ft=allFp.filter(p=>recordings[p.id]).length;
   document.getElementById('facTitle').textContent=selectedFacility||'Unknown';
@@ -981,6 +1156,7 @@ function renderFacility(){
     if(rec?.status==='processed')sb='<span class="badge badge-green">\u2713</span>';
     if(rec?.status==='error')sb='<span class="badge badge-red">\u2717</span>';
     if(rec?.status==='done')sb='<span class="badge badge-green">\u2713 done</span>';
+    if(rec?.status==='awaiting_review')sb='<span class="badge" style="background:var(--accent-dim);color:var(--accent)">review</span>';
     let th='';
     if(pt.currentTasks)th+='<div class="patient-task">\ud83d\udccb '+escHtml(pt.currentTasks)+'</div>';
     if(pt.followUpTasks)th+='<div class="patient-followup">\u21b3 '+escHtml(pt.followUpTasks)+'</div>';
@@ -991,7 +1167,11 @@ function renderFacility(){
     if(pt.ward)bh+='<span class="patient-bed">'+escHtml(pt.ward)+'</span>';
     if(pt.bed)bh+='<span class="patient-bed">Bed '+escHtml(pt.bed)+'</span>';
     let ex='';
-    if(isE){
+    if(isE&&rec?.status==='awaiting_review'&&rec?.structuredData){
+      const src=rec.transcript||rec.textInput||'';
+      const trBlock=src?'<details><summary style="font-size:12px;color:var(--text-muted);cursor:pointer">Source transcript / text</summary><div class="note-block" style="font-size:12px;color:var(--text-muted)">'+escHtml(src)+'</div></details>':'';
+      ex='<div class="sep">'+trBlock+renderReviewForm(pt.id,rec.structuredData)+'</div>';
+    }else if(isE){
       const noteType=rec?.noteType||'scribe';
       const inputMode=rec?.inputMode||'audio';
       const modeCtrl='<div style="margin-bottom:10px">'
@@ -1009,10 +1189,10 @@ function renderFacility(){
       let actionArea='';
       if(inputMode==='text'){
         const tv=escHtml(rec?.textInput||'');
-        const canProcess=!!(rec?.textInput?.trim())&&!isProcessing;
-        actionArea='<textarea class="keyterms-input" placeholder="Paste or type patient narrative here..." onclick="event.stopPropagation()" onkeydown="event.stopPropagation()" oninput="handleTextInput(\''+pt.id+'\',this.value)" style="min-height:120px;width:100%;margin-bottom:8px;resize:vertical">'+tv+'</textarea>';
-        actionArea+='<div class="controls">';
-        if(canProcess)actionArea+='<button class="btn btn-sm btn-primary" onclick="event.stopPropagation();processSingle(\''+pt.id+'\')">&#9889; Process this</button>';
+        const hasText=!!(rec?.textInput?.trim());
+        actionArea='<textarea name="textInput" class="keyterms-input" placeholder="Paste or type patient narrative here..." onclick="event.stopPropagation()" onkeydown="event.stopPropagation()" oninput="handleTextInput(\''+pt.id+'\',this.value)" style="min-height:120px;width:100%;margin-bottom:8px;resize:vertical">'+tv+'</textarea>';
+        actionArea+='<div class="controls" id="text-ctrl-'+pt.id+'">';
+        if(hasText&&!isProcessing)actionArea+='<button class="btn btn-sm btn-primary btn-process-single" onclick="event.stopPropagation();processSingle(\''+pt.id+'\')">&#9889; Process this</button>';
         if(rec?.note&&rec.status==='processed')actionArea+='<button class="btn btn-sm btn-copy" onclick="event.stopPropagation();copyNote(\''+pt.id+'\')">\ud83d\udccb Copy Note</button>';
         actionArea+='</div>';
       }else{
@@ -1036,7 +1216,7 @@ function renderFacility(){
         actionArea='<div class="controls">'+c+'</div>';
       }
       const noteVal=escHtml(patientNotes[pt.id]||'');
-      const noteField='<div style="margin-top:10px"><input class="input" type="text" placeholder="Add a note/reminder..." value="'+noteVal+'" style="font-family:\'IBM Plex Sans\',sans-serif;font-size:12px;padding:6px 10px" onclick="event.stopPropagation()" onchange="patientNotes[\''+pt.id+'\']=this.value;saveState()" onkeydown="event.stopPropagation()"></div>';
+      const noteField='<div style="margin-top:10px"><input name="patientNote" class="input" type="text" placeholder="Add a note/reminder..." value="'+noteVal+'" style="font-family:\'IBM Plex Sans\',sans-serif;font-size:12px;padding:6px 10px" onclick="event.stopPropagation()" onchange="patientNotes[\''+pt.id+'\']=this.value;saveState()" onkeydown="event.stopPropagation()"></div>';
       const tr=rec?.transcript?'<details><summary>Raw transcript</summary><div class="note-block" style="font-size:12px;color:var(--text-muted)">'+escHtml(rec.transcript)+'</div></details>':'';
       const nh=rec?.note?'<div class="note-block">'+escHtml(rec.note)+'</div>':'';
       ex='<div class="sep">'+modeCtrl+actionArea+noteField+tr+nh+'</div>';
