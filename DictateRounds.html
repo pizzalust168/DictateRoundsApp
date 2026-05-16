@@ -1115,9 +1115,9 @@ function renderHome(){
   document.getElementById('pendingCount').textContent=recorded;
   document.getElementById('retryFailedBtn').style.display=failed>0?'inline-flex':'none';
   document.getElementById('failedCount').textContent=failed;
-  const hasReviewable=processed>0||done>0||failed>0;
+  const hasReviewable=processed>0||done>0||failed>0||awaitingReview>0;
   document.getElementById('reviewNotesBtn').style.display=hasReviewable?'inline-flex':'none';
-  document.getElementById('processedCount').textContent=processed>0?processed:(done+failed);
+  document.getElementById('processedCount').textContent=processed+awaitingReview>0?processed+awaitingReview:(done+failed);
   const hasAnyAudio=Object.values(recordings).some(r=>r.audioId);
   document.getElementById('exportAudioBtn').style.display=hasAnyAudio?'inline-flex':'none';
   document.getElementById('clearDayBtn').style.display=totalRecs>0?'inline-flex':'none';
@@ -1246,21 +1246,47 @@ function renderFacility(){
 }
 
 function renderReview(){
+  const awaitingEntries=Object.entries(recordings).filter(([_,r])=>r.status==='awaiting_review');
   const processedEntries=Object.entries(recordings).filter(([_,r])=>r.status==='processed');
   const doneEntries=Object.entries(recordings).filter(([_,r])=>r.status==='done');
   const errorEntries=Object.entries(recordings).filter(([_,r])=>r.status==='error');
   const pendingNotes=[...processedEntries,...errorEntries];
   const totalReady=processedEntries.length;
   const totalDone=doneEntries.length;
-  document.getElementById('reviewCount').textContent=totalReady>0?totalReady+' notes to copy':(totalDone>0?'All notes copied':'No processed notes');
+  const totalAwaiting=awaitingEntries.length;
+  let countParts=[];
+  if(totalAwaiting>0)countParts.push(totalAwaiting+' to review');
+  if(totalReady>0)countParts.push(totalReady+' to copy');
+  document.getElementById('reviewCount').textContent=countParts.length>0?countParts.join(' \u00b7 '):(totalDone>0?'All notes done':'No processed notes');
   let summaryParts=[];
   if(totalDone>0)summaryParts.push(totalDone+' done');
   if(errorEntries.length>0)summaryParts.push(errorEntries.length+' errors');
   document.getElementById('reviewSummary').textContent=summaryParts.length>0?summaryParts.join(' \u00b7 '):'Copy and paste into C2C and facility EMR';
-  // Show/hide retry button
   document.getElementById('retryFailedReviewBtn').style.display=errorEntries.length>0?'inline-flex':'none';
   document.getElementById('failedCountReview').textContent=errorEntries.length;
-  // Group all entries by facility
+  const reviewEl=document.getElementById('reviewList');
+  let html='';
+  // Awaiting 731 review section
+  if(totalAwaiting>0){
+    html+='<div style="font-size:11px;font-weight:600;color:var(--accent);margin:0 0 10px;padding-bottom:6px;border-bottom:1px solid var(--border);text-transform:uppercase;letter-spacing:0.5px">Awaiting 731 Review</div>';
+    for(const[pid,rec]of awaitingEntries){
+      const patient=todayPatients.find(p=>p.id===pid)||allPatients.find(p=>p.id===pid);
+      if(!patient)continue;
+      const fac=patient.facility||'Unknown';
+      let bh='';
+      if(patient.ward)bh+='<span class="patient-bed">'+escHtml(patient.ward)+'</span>';
+      if(patient.bed)bh+='<span class="patient-bed">Bed '+escHtml(patient.bed)+'</span>';
+      const ef=fac.replace(/\\/g,'\\\\').replace(/'/g,"\\'");
+      html+='<div class="card">'
+        +'<div style="display:flex;justify-content:space-between;align-items:center">'
+        +'<div><div style="display:flex;align-items:center;flex-wrap:wrap"><span class="patient-name">'+escHtml(patient.name)+'</span>'+bh+'</div>'
+        +'<div style="font-size:12px;color:var(--text-muted);margin-top:2px">'+escHtml(fac)+'</div></div>'
+        +'<button class="btn btn-sm" style="background:var(--accent-dim);color:var(--accent);white-space:nowrap" onclick="selectedFacility=\''+ef+'\';expandedPatient=\''+pid+'\';showView(\'facility\')">Complete Review \u2192</button>'
+        +'</div></div>';
+    }
+    if(pendingNotes.length>0||doneEntries.length>0)html+='<div style="height:8px"></div>';
+  }
+  // Group processed/error/done entries by facility
   const allReviewEntries=[...pendingNotes,...doneEntries];
   const facGroups={};
   for(const[pid,rec]of allReviewEntries){
@@ -1270,7 +1296,6 @@ function renderReview(){
     if(!facGroups[fac])facGroups[fac]=[];
     facGroups[fac].push([pid,rec,patient]);
   }
-  // Sort patients within each facility: uncopied first, then done, alphabetically within each group
   for(const fac of Object.keys(facGroups)){
     facGroups[fac].sort((a,b)=>{
       const aD=a[1].status==='done'?1:0;const bD=b[1].status==='done'?1:0;
@@ -1278,11 +1303,8 @@ function renderReview(){
       return a[2].name.localeCompare(b[2].name);
     });
   }
-  // Use todayFacilities order, then any remaining
   const facOrder=todayFacilities.filter(f=>facGroups[f]);
   for(const f of Object.keys(facGroups)){if(!facOrder.includes(f))facOrder.push(f);}
-  const reviewEl=document.getElementById('reviewList');
-  let html='';
   for(const fac of facOrder){
     if(!facGroups[fac])continue;
     html+='<div style="font-size:14px;font-weight:600;color:var(--text-muted);margin:20px 0 10px;padding-bottom:6px;border-bottom:1px solid var(--border)">'+escHtml(fac)+'</div>';
@@ -1292,8 +1314,8 @@ function renderReview(){
       let bh='';
       if(patient.ward)bh+='<span class="patient-bed">'+escHtml(patient.ward)+'</span>';
       if(patient.bed)bh+='<span class="patient-bed">Bed '+escHtml(patient.bed)+'</span>';
-      // Clean note: strip blank lines after headings
-      const cleanNote=(rec.note||'').replace(/(History Of Presenting Illness|Examination|Plan)\n\n+/g,'$1\n');
+      const noteType=rec.noteType||'scribe';
+      const cleanNote=noteType==='scribe'?(rec.note||'').replace(/(History Of Presenting Illness|Examination|Plan)\n\n+/g,'$1\n'):(rec.note||'');
       const cardStyle=isDone?' style="opacity:0.5"':'';
       const cardClass=isErr?' card-recording':isDone?'':' card-processed';
       const btnHtml=isDone
