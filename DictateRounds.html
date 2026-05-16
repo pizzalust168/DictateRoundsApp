@@ -683,23 +683,34 @@ function renderMdcp731(data) {
 
 // ─── Batch Process (parallel, 3 concurrent) ───
 async function processOne(pid,rec,dgKey,anKey,kt){
-  const blob=await loadBlob(rec.audioId);if(!blob)throw new Error('Audio not found');
-  const dgUrl=new URL('https://api.deepgram.com/v1/listen');
-  dgUrl.searchParams.set('model','nova-3-medical');
-  dgUrl.searchParams.set('smart_format','true');
-  dgUrl.searchParams.set('punctuate','true');
-  if(kt.length>0)dgUrl.searchParams.set('keywords',kt.join(','));
-  // Try WebM first (small, fast upload), fall back to WAV on 400 errors
-  let dgR=await fetch(dgUrl.toString(),{method:'POST',headers:{'Authorization':'Token '+dgKey,'Content-Type':'audio/webm'},body:blob});
-  if(dgR.status===400){
-    let wavBlob;
-    try{wavBlob=await webmToWav(blob);}catch(e){throw new Error('Audio conversion failed - recording may be corrupt')}
-    dgR=await fetch(dgUrl.toString(),{method:'POST',headers:{'Authorization':'Token '+dgKey,'Content-Type':'audio/wav'},body:wavBlob});
+  const inputMode=rec.inputMode||'audio';
+  const noteType=rec.noteType||'scribe';
+  let transcript;
+
+  if(inputMode==='text'){
+    transcript=rec.textInput;
+    if(!transcript?.trim())throw new Error('No text input provided');
+  }else{
+    const blob=await loadBlob(rec.audioId);if(!blob)throw new Error('Audio not found');
+    const dgUrl=new URL('https://api.deepgram.com/v1/listen');
+    dgUrl.searchParams.set('model','nova-3-medical');
+    dgUrl.searchParams.set('smart_format','true');
+    dgUrl.searchParams.set('punctuate','true');
+    if(kt.length>0)dgUrl.searchParams.set('keywords',kt.join(','));
+    // Try WebM first (small, fast upload), fall back to WAV on 400 errors
+    let dgR=await fetch(dgUrl.toString(),{method:'POST',headers:{'Authorization':'Token '+dgKey,'Content-Type':'audio/webm'},body:blob});
+    if(dgR.status===400){
+      let wavBlob;
+      try{wavBlob=await webmToWav(blob);}catch(e){throw new Error('Audio conversion failed - recording may be corrupt')}
+      dgR=await fetch(dgUrl.toString(),{method:'POST',headers:{'Authorization':'Token '+dgKey,'Content-Type':'audio/wav'},body:wavBlob});
+    }
+    if(!dgR.ok)throw new Error('Deepgram: '+dgR.status+' '+(await dgR.text()));
+    const dgD=await dgR.json();
+    transcript=dgD.results?.channels?.[0]?.alternatives?.[0]?.transcript||'';
+    if(!transcript.trim())throw new Error('Empty transcript');
   }
-  if(!dgR.ok)throw new Error('Deepgram: '+dgR.status+' '+(await dgR.text()));
-  const dgD=await dgR.json();
-  const transcript=dgD.results?.channels?.[0]?.alternatives?.[0]?.transcript||'';
-  if(!transcript.trim())throw new Error('Empty transcript');
+
+  // noteType branch — 731 added in Phase 4
   const stR=await fetch('https://api.anthropic.com/v1/messages',{method:'POST',headers:{'Content-Type':'application/json','x-api-key':anKey,'anthropic-version':'2023-06-01','anthropic-dangerous-direct-browser-access':'true'},body:JSON.stringify({model:'claude-sonnet-4-20250514',max_tokens:2000,system:SCRIBE_PROMPT,messages:[{role:'user',content:transcript}]})});
   if(!stR.ok)throw new Error('Anthropic: '+stR.status+' '+(await stR.text()));
   const stD=await stR.json();
@@ -709,10 +720,13 @@ async function processOne(pid,rec,dgKey,anKey,kt){
 async function batchProcess(retryMode){
   const dgKey=localStorage.getItem('dr_deepgramKey');
   const anKey=localStorage.getItem('dr_anthropicKey');
-  if(!dgKey||!anKey){showView('settings');showToast('Please set both API keys first');return}
   const toProc=retryMode
-    ?Object.entries(recordings).filter(([_,r])=>r.status==='error'&&r.audioId)
-    :Object.entries(recordings).filter(([_,r])=>r.status==='recorded'&&r.audioId);
+    ?Object.entries(recordings).filter(([_,r])=>r.status==='error'&&(r.audioId||r.textInput))
+    :Object.entries(recordings).filter(([_,r])=>
+        (r.status==='recorded'&&r.audioId)||
+        (r.status==='text-ready'&&r.textInput));
+  const needsDg=toProc.some(([_,r])=>(r.inputMode||'audio')==='audio');
+  if(!anKey||(needsDg&&!dgKey)){showView('settings');showToast('Please set API keys in Settings');return}
   if(toProc.length===0){showToast(retryMode?'No failed recordings to retry':'No unprocessed recordings');return}
   isProcessing=true;
   const kt=(localStorage.getItem('dr_keyterms')||'').split('\n').filter(t=>t.trim());
@@ -742,6 +756,43 @@ async function batchProcess(retryMode){
   let msg=successCount+' processed';
   if(failCount>0)msg+=' \u00b7 '+failCount+' failed';
   showToast(msg);showView('review');
+}
+
+// ─── Text input / single-patient processing helpers ───
+function setInputMode(pid,mode){
+  const prev=recordings[pid]||{noteType:'scribe',audioId:null,duration:0,note:null,transcript:null,textInput:null,structuredData:null};
+  let newStatus=prev.status;
+  if(mode==='audio'&&prev.status==='text-ready')newStatus=prev.audioId?'recorded':null;
+  if(mode==='text'&&prev.status==='recorded')newStatus=prev.textInput?.trim()?'text-ready':null;
+  recordings[pid]={...prev,inputMode:mode,status:newStatus};
+  saveState();renderFacility();
+}
+
+function handleTextInput(pid,value){
+  const prev=recordings[pid]||{noteType:'scribe',inputMode:'text',audioId:null,duration:0,note:null,transcript:null,structuredData:null};
+  recordings[pid]={...prev,inputMode:'text',textInput:value||null,status:value.trim()?'text-ready':(prev.audioId?'recorded':null)};
+  saveState();
+}
+
+async function processSingle(pid){
+  const dgKey=localStorage.getItem('dr_deepgramKey');
+  const anKey=localStorage.getItem('dr_anthropicKey');
+  const rec=recordings[pid];
+  if(!rec)return;
+  if(!anKey){showView('settings');showToast('Please set Anthropic API key first');return}
+  if((rec.inputMode||'audio')==='audio'&&!dgKey){showView('settings');showToast('Please set Deepgram API key first');return}
+  const kt=(localStorage.getItem('dr_keyterms')||'').split('\n').filter(t=>t.trim());
+  isProcessing=true;
+  const ind=document.getElementById('processingIndicator');
+  ind.style.display='inline';ind.textContent='Processing...';
+  try{
+    const result=await processOne(pid,rec,dgKey,anKey,kt);
+    recordings[pid]={...recordings[pid],note:result.note,transcript:result.transcript,status:'processed'};
+  }catch(err){
+    recordings[pid]={...recordings[pid],status:'error',note:'Error: '+err.message};
+  }
+  isProcessing=false;ind.style.display='none';
+  saveState();renderFacility();
 }
 
 // ─── Clear Day ───
@@ -852,7 +903,7 @@ function renderSelect(){
 }
 
 function renderHome(){
-  const recorded=Object.values(recordings).filter(r=>r.status==='recorded').length;
+  const recorded=Object.values(recordings).filter(r=>r.status==='recorded'||r.status==='text-ready').length;
   const processed=Object.values(recordings).filter(r=>r.status==='processed').length;
   const done=Object.values(recordings).filter(r=>r.status==='done').length;
   const failed=Object.values(recordings).filter(r=>r.status==='error').length;
@@ -880,7 +931,7 @@ function renderHome(){
   document.getElementById('clearDayBtn').style.display=totalRecs>0?'inline-flex':'none';
   document.getElementById('facilityList').innerHTML=todayFacilities.map(fac=>{
     const fp=todayPatients.filter(p=>p.facility===fac);
-    const fr=fp.filter(p=>recordings[p.id]?.status==='recorded').length;
+    const fr=fp.filter(p=>['recorded','text-ready'].includes(recordings[p.id]?.status)).length;
     const fpd=fp.filter(p=>recordings[p.id]?.status==='processed').length;
     const ft=fp.filter(p=>recordings[p.id]).length;
     let badges='';
@@ -900,7 +951,7 @@ function renderHome(){
 function renderFacility(){
   const allFp=todayPatients.filter(p=>p.facility===selectedFacility);
   const fp=searchQuery?allFp.filter(p=>p.name.toLowerCase().includes(searchQuery.toLowerCase())):allFp;
-  const fr=allFp.filter(p=>recordings[p.id]?.status==='recorded').length;
+  const fr=allFp.filter(p=>['recorded','text-ready'].includes(recordings[p.id]?.status)).length;
   const fpd=allFp.filter(p=>recordings[p.id]?.status==='processed').length;
   const ft=allFp.filter(p=>recordings[p.id]).length;
   document.getElementById('facTitle').textContent=selectedFacility||'Unknown';
@@ -912,6 +963,7 @@ function renderFacility(){
     let cls='card';if(isR)cls+=' card-recording';else if(rec?.status==='processed')cls+=' card-processed';
     let sb='';
     if(rec?.status==='recorded')sb='<span class="badge badge-amber">'+fmtTime(rec.duration)+'</span>';
+    if(rec?.status==='text-ready')sb='<span class="badge badge-amber">text</span>';
     if(rec?.status==='processed')sb='<span class="badge badge-green">\u2713</span>';
     if(rec?.status==='error')sb='<span class="badge badge-red">\u2717</span>';
     if(rec?.status==='done')sb='<span class="badge badge-green">\u2713 done</span>';
@@ -926,30 +978,46 @@ function renderFacility(){
     if(pt.bed)bh+='<span class="patient-bed">Bed '+escHtml(pt.bed)+'</span>';
     let ex='';
     if(isE){
-      let c='';
-      if(!isR){
-        const l=rec?.audioId?'Re-record':'Record';
-        const st=rec?.audioId?'background:var(--amber-dim);color:var(--amber)':'background:var(--red-dim);color:var(--red)';
-        const d=activeRecording&&activeRecording!==pt.id?'disabled':'';
-        c+='<button class="btn btn-sm" style="'+st+'" onclick="event.stopPropagation();startRecording(\''+pt.id+'\')" '+d+'>\u25cf '+l+'</button>';
-        // Append button - only show if recording exists
-        if(rec?.audioId){
-          c+='<button class="btn btn-sm" style="background:var(--accent-dim);color:var(--accent)" onclick="event.stopPropagation();startRecording(\''+pt.id+'\',true)" '+d+'>+ Append</button>';
-        }
+      const inputMode=rec?.inputMode||'audio';
+      const modeCtrl='<div style="margin-bottom:10px;display:flex;align-items:center;gap:8px">'
+        +'<span style="font-size:12px;color:var(--text-muted)">Input:</span>'
+        +'<button class="btn btn-sm" style="'+(inputMode==='audio'?'background:var(--accent);color:#fff':'background:transparent;border:1px solid var(--border);color:var(--text-muted)')+'" onclick="event.stopPropagation();setInputMode(\''+pt.id+'\',\'audio\')">Dictate</button>'
+        +'<button class="btn btn-sm" style="'+(inputMode==='text'?'background:var(--accent);color:#fff':'background:transparent;border:1px solid var(--border);color:var(--text-muted)')+'" onclick="event.stopPropagation();setInputMode(\''+pt.id+'\',\'text\')">Type</button>'
+        +'</div>';
+      let actionArea='';
+      if(inputMode==='text'){
+        const tv=escHtml(rec?.textInput||'');
+        const canProcess=!!(rec?.textInput?.trim())&&!isProcessing;
+        actionArea='<textarea class="keyterms-input" placeholder="Paste or type patient narrative here..." onclick="event.stopPropagation()" onkeydown="event.stopPropagation()" oninput="handleTextInput(\''+pt.id+'\',this.value)" style="min-height:120px;width:100%;margin-bottom:8px;resize:vertical">'+tv+'</textarea>';
+        actionArea+='<div class="controls">';
+        if(canProcess)actionArea+='<button class="btn btn-sm btn-primary" onclick="event.stopPropagation();processSingle(\''+pt.id+'\')">&#9889; Process this</button>';
+        if(rec?.note&&rec.status==='processed')actionArea+='<button class="btn btn-sm btn-copy" onclick="event.stopPropagation();copyNote(\''+pt.id+'\')">\ud83d\udccb Copy Note</button>';
+        actionArea+='</div>';
       }else{
-        c+='<button class="btn btn-sm btn-recording" onclick="event.stopPropagation();stopRecording()">\u25a0 Stop ('+fmtTime(recordingTime)+')</button>';
+        let c='';
+        if(!isR){
+          const l=rec?.audioId?'Re-record':'Record';
+          const st=rec?.audioId?'background:var(--amber-dim);color:var(--amber)':'background:var(--red-dim);color:var(--red)';
+          const d=activeRecording&&activeRecording!==pt.id?'disabled':'';
+          c+='<button class="btn btn-sm" style="'+st+'" onclick="event.stopPropagation();startRecording(\''+pt.id+'\')" '+d+'>\u25cf '+l+'</button>';
+          if(rec?.audioId){
+            c+='<button class="btn btn-sm" style="background:var(--accent-dim);color:var(--accent)" onclick="event.stopPropagation();startRecording(\''+pt.id+'\',true)" '+d+'>+ Append</button>';
+          }
+        }else{
+          c+='<button class="btn btn-sm btn-recording" onclick="event.stopPropagation();stopRecording()">\u25a0 Stop ('+fmtTime(recordingTime)+')</button>';
+        }
+        if(rec?.audioId&&!isR){
+          c+='<button class="btn btn-sm btn-ghost" onclick="event.stopPropagation();playAudio(\''+rec.audioId+'\')">'+(playingAudioId===rec.audioId?'\u23f8 Pause':'\u25b6 Play')+'</button>';
+          c+='<button class="btn btn-sm" style="background:var(--red-dim);color:var(--red)" onclick="event.stopPropagation();deleteRecording(\''+pt.id+'\')">\u2715 Delete</button>';
+        }
+        if(rec?.note&&rec.status==='processed')c+='<button class="btn btn-sm btn-copy" onclick="event.stopPropagation();copyNote(\''+pt.id+'\')">\ud83d\udccb Copy Note</button>';
+        actionArea='<div class="controls">'+c+'</div>';
       }
-      if(rec?.audioId&&!isR){
-        c+='<button class="btn btn-sm btn-ghost" onclick="event.stopPropagation();playAudio(\''+rec.audioId+'\')">'+(playingAudioId===rec.audioId?'\u23f8 Pause':'\u25b6 Play')+'</button>';
-        c+='<button class="btn btn-sm" style="background:var(--red-dim);color:var(--red)" onclick="event.stopPropagation();deleteRecording(\''+pt.id+'\')">\u2715 Delete</button>';
-      }
-      if(rec?.note&&rec.status==='processed')c+='<button class="btn btn-sm btn-copy" onclick="event.stopPropagation();copyNote(\''+pt.id+'\')">\ud83d\udccb Copy Note</button>';
-      // Patient note/reminder field
       const noteVal=escHtml(patientNotes[pt.id]||'');
-      let noteField='<div style="margin-top:10px"><input class="input" type="text" placeholder="Add a note/reminder..." value="'+noteVal+'" style="font-family:\'IBM Plex Sans\',sans-serif;font-size:12px;padding:6px 10px" onclick="event.stopPropagation()" onchange="patientNotes[\''+pt.id+'\']=this.value;saveState()" onkeydown="event.stopPropagation()"></div>';
-      let tr=rec?.transcript?'<details><summary>Raw transcript</summary><div class="note-block" style="font-size:12px;color:var(--text-muted)">'+escHtml(rec.transcript)+'</div></details>':'';
-      let nh=rec?.note?'<div class="note-block">'+escHtml(rec.note)+'</div>':'';
-      ex='<div class="sep"><div class="controls">'+c+'</div>'+noteField+tr+nh+'</div>';
+      const noteField='<div style="margin-top:10px"><input class="input" type="text" placeholder="Add a note/reminder..." value="'+noteVal+'" style="font-family:\'IBM Plex Sans\',sans-serif;font-size:12px;padding:6px 10px" onclick="event.stopPropagation()" onchange="patientNotes[\''+pt.id+'\']=this.value;saveState()" onkeydown="event.stopPropagation()"></div>';
+      const tr=rec?.transcript?'<details><summary>Raw transcript</summary><div class="note-block" style="font-size:12px;color:var(--text-muted)">'+escHtml(rec.transcript)+'</div></details>':'';
+      const nh=rec?.note?'<div class="note-block">'+escHtml(rec.note)+'</div>':'';
+      ex='<div class="sep">'+modeCtrl+actionArea+noteField+tr+nh+'</div>';
     }
     return '<div class="'+cls+'">'
       +'<div style="display:flex;justify-content:space-between;align-items:flex-start;cursor:pointer" onclick="expandedPatient=expandedPatient===\''+pt.id+'\'?null:\''+pt.id+'\';renderFacility()">'
