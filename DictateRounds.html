@@ -432,9 +432,59 @@ async function deleteBlob(id){const db=await openDB();return new Promise((s,f)=>
 function uid(){return Date.now().toString(36)+Math.random().toString(36).slice(2,7)}
 function fmtTime(s){return Math.floor(s/60)+':'+String(Math.floor(s%60)).padStart(2,'0')}
 function escHtml(s){const d=document.createElement('div');d.textContent=s;return d.innerHTML}
+function escAttr(s){return String(s??'').replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/'/g,'&#39;').replace(/</g,'&lt;').replace(/>/g,'&gt;')}
+function normaliseKeyPart(s){return String(s||'').trim().toLowerCase().replace(/\s+/g,' ')}
+function stableHash(s){
+  let h=2166136261;
+  for(let i=0;i<s.length;i++)h=Math.imul(h^s.charCodeAt(i),16777619);
+  return (h>>>0).toString(36);
+}
+function patientStableId(p){
+  const hasDob=!!normaliseKeyPart(p.dob);
+  const parts=hasDob
+    ?[p.facility,p.name,p.dob]
+    :[p.facility,p.ward,p.bed,p.name];
+  return 'pt_'+stableHash(parts.map(normaliseKeyPart).join('|'));
+}
+function uniquePatientId(base,usedIds){
+  let id=base;let n=2;
+  while(usedIds.has(id)){id=base+'_'+n;n++;}
+  usedIds.add(id);
+  return id;
+}
 function showToast(msg){const el=document.getElementById('toast');el.textContent=msg;el.style.display='block';setTimeout(()=>el.style.display='none',2500)}
 function saveState(){localStorage.setItem('dr_recordings',JSON.stringify(recordings));localStorage.setItem('dr_patientNotes',JSON.stringify(patientNotes))}
 function saveTodayState(){localStorage.setItem('dr_selectedFacilities',JSON.stringify([...selectedFacilities]));localStorage.setItem('dr_todayPatients',JSON.stringify(todayPatients))}
+
+function reconcileImportedPatientState(newPatients){
+  const previousByStable=new Map();
+  for(const oldPatient of allPatients){
+    const stableId=patientStableId(oldPatient);
+    if(!previousByStable.has(stableId))previousByStable.set(stableId,oldPatient.id);
+  }
+  for(const patient of newPatients){
+    const oldId=previousByStable.get(patientStableId(patient));
+    if(!oldId||oldId===patient.id)continue;
+    if(recordings[oldId]&&!recordings[patient.id]){
+      recordings[patient.id]=recordings[oldId];
+      delete recordings[oldId];
+    }
+    if(patientNotes[oldId]!==undefined&&patientNotes[patient.id]===undefined){
+      patientNotes[patient.id]=patientNotes[oldId];
+      delete patientNotes[oldId];
+    }
+  }
+}
+
+function todayPatientIds(){return new Set(todayPatients.map(p=>p.id))}
+function todayRecordingEntries(){
+  const ids=todayPatientIds();
+  return Object.entries(recordings).filter(([pid])=>ids.has(pid));
+}
+function recordingAudioIds(rec){return rec?.audioIds?.length?rec.audioIds:(rec?.audioId?[rec.audioId]:[])}
+async function deleteRecordingAudio(rec){
+  for(const id of recordingAudioIds(rec))try{await deleteBlob(id)}catch(e){}
+}
 
 function loadState(){
   try{
@@ -445,6 +495,7 @@ function loadState(){
       if(!rec.inputMode)rec.inputMode='audio';
       if(rec.textInput===undefined)rec.textInput=null;
       if(rec.structuredData===undefined)rec.structuredData=null;
+      if(rec.audioIds===undefined)rec.audioIds=rec.audioId?[rec.audioId]:[];
     }
     const pn=localStorage.getItem('dr_patientNotes');if(pn)patientNotes=JSON.parse(pn);
     const p=localStorage.getItem('dr_allPatients');if(p){allPatients=JSON.parse(p);allFacilities=[...new Set(allPatients.map(x=>x.facility))];}
@@ -483,6 +534,7 @@ function importFile(file){
       const rows=XLSX.utils.sheet_to_json(ws,{header:1,defval:''});
       let currentFacility='';
       let currentWard='';
+      const usedIds=new Set();
       for(let i=1;i<rows.length;i++){
         const row=rows[i];
         const colA=String(row[0]||'').trim();
@@ -497,11 +549,17 @@ function importFile(file){
         // Ward/location row: text in col B, no name, no col A
         if(!colA&&colB&&!name){currentWard=colB;continue;}
         // Patient row: has a name
-        if(name){parsed.push({id:uid(),facility:currentFacility,ward:currentWard,name,dob,bed,currentTasks:ct,followUpTasks:ft});}
+        if(name){
+          const patient={facility:currentFacility,ward:currentWard,name,dob,bed,currentTasks:ct,followUpTasks:ft};
+          patient.id=uniquePatientId(patientStableId(patient),usedIds);
+          parsed.push(patient);
+        }
       }
       parsed.sort((a,b)=>a.name.localeCompare(b.name));
+      reconcileImportedPatientState(parsed);
       allPatients=parsed;allFacilities=[...new Set(parsed.map(x=>x.facility))];
       localStorage.setItem('dr_allPatients',JSON.stringify(allPatients));
+      saveState();
       selectedFacilities=new Set();todayPatients=[];todayFacilities=[];saveTodayState();
       showToast('Imported '+parsed.length+' patients across '+allFacilities.length+' facilities');
       showView('select');
@@ -540,25 +598,19 @@ async function startRecording(pid,append){
     mediaRecorder.onstop=async()=>{
       stream.getTracks().forEach(t=>t.stop());
       const newBlob=new Blob(audioChunks,{type:'audio/webm'});
-      let finalBlob=newBlob;
+      const prev=recordings[pid]||{};
+      let finalAudioIds=[];
       let finalDuration=recordingTime;
-      // If appending, concatenate with existing audio
-      if(appendMode&&recordings[pid]?.audioId){
-        try{
-          const existingBlob=await loadBlob(recordings[pid].audioId);
-          if(existingBlob){
-            finalBlob=new Blob([existingBlob,newBlob],{type:'audio/webm'});
-            finalDuration=(recordings[pid].duration||0)+recordingTime;
-          }
-        }catch(e){}
-        try{await deleteBlob(recordings[pid].audioId)}catch(e){}
+      if(appendMode&&recordingAudioIds(prev).length){
+        finalAudioIds=recordingAudioIds(prev);
+        finalDuration=(recordings[pid].duration||0)+recordingTime;
       }else{
-        if(recordings[pid]?.audioId)try{await deleteBlob(recordings[pid].audioId)}catch(e){}
+        await deleteRecordingAudio(prev);
       }
       const aid='audio_'+pid+'_'+Date.now();
-      await saveBlob(aid,finalBlob);
-      const prev=recordings[pid]||{};
-      recordings[pid]={...prev,audioId:aid,duration:finalDuration,status:'recorded',note:null,transcript:null,noteType:prev.noteType||'scribe',inputMode:'audio',textInput:null,structuredData:null};
+      await saveBlob(aid,newBlob);
+      finalAudioIds.push(aid);
+      recordings[pid]={...prev,audioId:aid,audioIds:finalAudioIds,duration:finalDuration,status:'recorded',note:null,transcript:null,noteType:prev.noteType||'scribe',inputMode:'audio',textInput:null,structuredData:null};
       activeRecording=null;recordingTime=0;appendMode=false;clearInterval(recordingTimer);saveState();renderFacility();
     };
     mediaRecorder.start(1000);activeRecording=pid;recordingTime=0;
@@ -569,17 +621,29 @@ async function startRecording(pid,append){
 function stopRecording(){if(mediaRecorder&&mediaRecorder.state==='recording')mediaRecorder.stop()}
 
 async function deleteRecording(pid){
-  if(recordings[pid]?.audioId)try{await deleteBlob(recordings[pid].audioId)}catch(e){}
+  await deleteRecordingAudio(recordings[pid]);
   delete recordings[pid];saveState();renderFacility();
 }
 
-async function playAudio(aid){
-  if(playingAudioId===aid){currentAudio?.pause();playingAudioId=null;renderFacility();return}
-  const blob=await loadBlob(aid);if(!blob)return;
+async function playRecording(pid){
+  if(playingAudioId===pid){currentAudio?.pause();playingAudioId=null;renderFacility();return}
+  const ids=recordingAudioIds(recordings[pid]);if(ids.length===0)return;
   if(currentAudio)currentAudio.pause();
-  currentAudio=new Audio(URL.createObjectURL(blob));
-  currentAudio.onended=()=>{playingAudioId=null;renderFacility()};
-  currentAudio.play();playingAudioId=aid;renderFacility();
+  playingAudioId=pid;
+  let idx=0;
+  const playNext=async()=>{
+    const blob=await loadBlob(ids[idx]);
+    if(!blob){playingAudioId=null;renderFacility();return}
+    currentAudio=new Audio(URL.createObjectURL(blob));
+    currentAudio.onended=()=>{
+      idx++;
+      if(idx<ids.length)playNext();
+      else{playingAudioId=null;renderFacility();}
+    };
+    currentAudio.play();
+    renderFacility();
+  };
+  playNext();
 }
 
 async function copyNote(pid){
@@ -605,7 +669,58 @@ async function copyNote(pid){
   }
 }
 
+function normaliseMdcp731Data(data){
+  const d=data||{};
+  const assessment=a=>({
+    completed:a?.completed||'Not stated',
+    date:a?.date||'Not stated',
+    recommendations_actioned:a?.recommendations_actioned||'NA',
+    details:a?.details||''
+  });
+  return {
+    source_material_reviewed:Array.isArray(d.source_material_reviewed)?d.source_material_reviewed:[],
+    medication_chart_review:{
+      reviewed_today:!!d.medication_chart_review?.reviewed_today,
+      changes:d.medication_chart_review?.changes||'No changes'
+    },
+    rmmr:{status:d.rmmr?.status||'Not stated',date:d.rmmr?.date||'Not stated'},
+    immunisations:{
+      influenza_current_year:d.immunisations?.influenza_current_year||'Not stated',
+      pneumococcal:d.immunisations?.pneumococcal||'Not stated',
+      covid_booster:d.immunisations?.covid_booster||'Not stated',
+      shingles:d.immunisations?.shingles||'Not stated',
+      rsv:d.immunisations?.rsv||'Not stated',
+      adt:d.immunisations?.adt||'Not stated',
+      source:d.immunisations?.source||'Not stated'
+    },
+    assessments:{
+      cma_gp:assessment(d.assessments?.cma_gp),
+      cga_geriatrician:assessment(d.assessments?.cga_geriatrician)
+    },
+    mdt_case_conference:{
+      recent:d.mdt_case_conference?.recent||'Not stated',
+      date:d.mdt_case_conference?.date||'Not stated',
+      goals_met:d.mdt_case_conference?.goals_met||'NA'
+    },
+    health_status_summary:d.health_status_summary||'Not stated',
+    conditions:Array.isArray(d.conditions)?d.conditions:[],
+    goals:Array.isArray(d.goals)?d.goals.map(g=>({
+      condition:g?.condition||'',
+      goal:g?.goal||'',
+      actions:Array.isArray(g?.actions)?g.actions.map(a=>({
+        provider:a?.provider||'',
+        action:a?.action||'',
+        monitoring:a?.monitoring||'',
+        review:a?.review||''
+      })):[]
+    })):[],
+    checks_to_confirm:Array.isArray(d.checks_to_confirm)?d.checks_to_confirm:[],
+    not_documented:Array.isArray(d.not_documented)?d.not_documented:[]
+  };
+}
+
 function renderMdcp731(data) {
+  data=normaliseMdcp731Data(data);
   const lines = [];
 
   lines.push('GP Contribution to MDCP (Residential Aged Care Facility plan)');
@@ -701,17 +816,17 @@ async function processOne(pid,rec,dgKey,anKey,kt){
     transcript=rec.textInput;
     if(!transcript?.trim())throw new Error('No text input provided');
   }else{
-    const blob=await loadBlob(rec.audioId);if(!blob)throw new Error('Audio not found');
+    const audio=await loadRecordingAudio(rec);if(!audio.blob)throw new Error('Audio not found');
     const dgUrl=new URL('https://api.deepgram.com/v1/listen');
     dgUrl.searchParams.set('model','nova-3-medical');
     dgUrl.searchParams.set('smart_format','true');
     dgUrl.searchParams.set('punctuate','true');
     if(kt.length>0)dgUrl.searchParams.set('keywords',kt.join(','));
-    // Try WebM first (small, fast upload), fall back to WAV on 400 errors
-    let dgR=await fetch(dgUrl.toString(),{method:'POST',headers:{'Authorization':'Token '+dgKey,'Content-Type':'audio/webm'},body:blob});
-    if(dgR.status===400){
+    // Try WebM first for single recordings, fall back to WAV on 400 errors.
+    let dgR=await fetch(dgUrl.toString(),{method:'POST',headers:{'Authorization':'Token '+dgKey,'Content-Type':audio.contentType},body:audio.blob});
+    if(dgR.status===400&&audio.contentType!=='audio/wav'){
       let wavBlob;
-      try{wavBlob=await webmToWav(blob);}catch(e){throw new Error('Audio conversion failed - recording may be corrupt')}
+      try{wavBlob=await webmToWav(audio.blob);}catch(e){throw new Error('Audio conversion failed - recording may be corrupt')}
       dgR=await fetch(dgUrl.toString(),{method:'POST',headers:{'Authorization':'Token '+dgKey,'Content-Type':'audio/wav'},body:wavBlob});
     }
     if(!dgR.ok)throw new Error('Deepgram: '+dgR.status+' '+(await dgR.text()));
@@ -739,10 +854,11 @@ async function batchProcess(retryMode){
   if(isProcessing){showToast('Processing in progress - please wait');return}
   const dgKey=localStorage.getItem('dr_deepgramKey');
   const anKey=localStorage.getItem('dr_anthropicKey');
+  const entries=todayRecordingEntries();
   const toProc=retryMode
-    ?Object.entries(recordings).filter(([_,r])=>r.status==='error'&&(r.audioId||r.textInput))
-    :Object.entries(recordings).filter(([_,r])=>
-        (r.status==='recorded'&&r.audioId)||
+    ?entries.filter(([_,r])=>r.status==='error'&&(recordingAudioIds(r).length||r.textInput))
+    :entries.filter(([_,r])=>
+        (r.status==='recorded'&&recordingAudioIds(r).length)||
         (r.status==='text-ready'&&r.textInput));
   const needsDg=toProc.some(([_,r])=>(r.inputMode||'audio')==='audio');
   if(!anKey||(needsDg&&!dgKey)){showView('settings');showToast('Please set API keys in Settings');return}
@@ -785,7 +901,7 @@ async function batchProcess(retryMode){
 function inputReadyStatus(rec,mode){
   return mode==='text'
     ?(rec.textInput?.trim()?'text-ready':null)
-    :(rec.audioId?'recorded':null);
+    :(recordingAudioIds(rec).length?'recorded':null);
 }
 
 function setNoteType(pid,type){
@@ -920,17 +1036,19 @@ async function reExtract731(pid){
 function cancelReview(pid){expandedPatient=null;renderFacility();}
 
 function renderReviewForm(pid,data){
-  const pidAttr=escHtml(pid);
-  const fieldAttrs=path=>' data-mdcp-field="'+escHtml(path)+'" data-patient-id="'+pidAttr+'"';
+  data=normaliseMdcp731Data(data);
+  if(recordings[pid])recordings[pid].structuredData=data;
+  const pidAttr=escAttr(pid);
+  const fieldAttrs=path=>' data-mdcp-field="'+escAttr(path)+'" data-patient-id="'+pidAttr+'"';
   const actionAttrs=(action,extra='')=>' data-mdcp-action="'+action+'" data-patient-id="'+pidAttr+'"'+extra;
   const sec=t=>'<div style="font-size:11px;font-weight:600;color:var(--text-muted);margin:16px 0 8px;padding-bottom:4px;border-bottom:1px solid var(--border);text-transform:uppercase;letter-spacing:0.5px">'+t+'</div>';
-  const inp=(path,val,ph)=>'<input name="'+escHtml(path)+'" class="input" type="text" value="'+escHtml(val||'')+'" placeholder="'+escHtml(ph||'')+'"'+fieldAttrs(path)+'>';
-  const sel=(path,opts,cur)=>'<select name="'+escHtml(path)+'" class="input" style="width:auto;display:inline-block"'+fieldAttrs(path)+'>'+opts.map(o=>'<option value="'+escHtml(o)+'"'+(o===cur?' selected':'')+'>'+escHtml(o)+'</option>').join('')+'</select>';
+  const inp=(path,val,ph)=>'<input name="'+escAttr(path)+'" class="input" type="text" value="'+escAttr(val||'')+'" placeholder="'+escAttr(ph||'')+'"'+fieldAttrs(path)+'>';
+  const sel=(path,opts,cur)=>'<select name="'+escAttr(path)+'" class="input" style="width:auto;display:inline-block"'+fieldAttrs(path)+'>'+opts.map(o=>'<option value="'+escAttr(o)+'"'+(o===cur?' selected':'')+'>'+escHtml(o)+'</option>').join('')+'</select>';
   let h='';
 
   h+=sec('Source material reviewed');
   (data.source_material_reviewed||[]).forEach((item,i)=>{
-    h+='<div style="display:flex;gap:6px;margin-bottom:6px"><input name="source_material_reviewed" class="input" type="text" value="'+escHtml(item)+'"'+fieldAttrs('source_material_reviewed.'+i)+' style="flex:1"><button class="btn btn-sm" style="background:var(--red-dim);color:var(--red)"'+actionAttrs('remove-item',' data-path="source_material_reviewed" data-index="'+i+'"')+'>✕</button></div>';
+    h+='<div style="display:flex;gap:6px;margin-bottom:6px"><input name="source_material_reviewed" class="input" type="text" value="'+escAttr(item)+'"'+fieldAttrs('source_material_reviewed.'+i)+' style="flex:1"><button class="btn btn-sm" style="background:var(--red-dim);color:var(--red)"'+actionAttrs('remove-item',' data-path="source_material_reviewed" data-index="'+i+'"')+'>✕</button></div>';
   });
   h+='<button class="btn btn-sm btn-ghost"'+actionAttrs('add-item',' data-path="source_material_reviewed"')+'>+ Add source</button>';
 
@@ -969,7 +1087,7 @@ function renderReviewForm(pid,data){
   h+='<div class="input-label">Summary</div>'+inp('health_status_summary',data.health_status_summary);
   h+='<div class="input-label" style="margin-top:8px">Conditions</div>';
   (data.conditions||[]).forEach((c,i)=>{
-    h+='<div style="display:flex;gap:6px;margin-bottom:6px"><input name="conditions" class="input" type="text" value="'+escHtml(c)+'"'+fieldAttrs('conditions.'+i)+' style="flex:1"><button class="btn btn-sm" style="background:var(--red-dim);color:var(--red)"'+actionAttrs('remove-item',' data-path="conditions" data-index="'+i+'"')+'>✕</button></div>';
+    h+='<div style="display:flex;gap:6px;margin-bottom:6px"><input name="conditions" class="input" type="text" value="'+escAttr(c)+'"'+fieldAttrs('conditions.'+i)+' style="flex:1"><button class="btn btn-sm" style="background:var(--red-dim);color:var(--red)"'+actionAttrs('remove-item',' data-path="conditions" data-index="'+i+'"')+'>✕</button></div>';
   });
   h+='<button class="btn btn-sm btn-ghost"'+actionAttrs('add-item',' data-path="conditions"')+'>+ Add condition</button>';
 
@@ -996,12 +1114,12 @@ function renderReviewForm(pid,data){
   h+=sec('Flags');
   h+='<div class="input-label">Checks to confirm before finalising</div>';
   (data.checks_to_confirm||[]).forEach((item,i)=>{
-    h+='<div style="display:flex;gap:6px;margin-bottom:6px"><input name="checks_to_confirm" class="input" type="text" value="'+escHtml(item)+'"'+fieldAttrs('checks_to_confirm.'+i)+' style="flex:1"><button class="btn btn-sm" style="background:var(--amber-dim);color:var(--amber)"'+actionAttrs('remove-item',' data-path="checks_to_confirm" data-index="'+i+'"')+'>Dismiss</button></div>';
+    h+='<div style="display:flex;gap:6px;margin-bottom:6px"><input name="checks_to_confirm" class="input" type="text" value="'+escAttr(item)+'"'+fieldAttrs('checks_to_confirm.'+i)+' style="flex:1"><button class="btn btn-sm" style="background:var(--amber-dim);color:var(--amber)"'+actionAttrs('remove-item',' data-path="checks_to_confirm" data-index="'+i+'"')+'>Dismiss</button></div>';
   });
   h+='<button class="btn btn-sm btn-ghost" style="margin-bottom:12px"'+actionAttrs('add-item',' data-path="checks_to_confirm"')+'>+ Add check</button>';
   h+='<div class="input-label">Not documented in source</div>';
   (data.not_documented||[]).forEach((item,i)=>{
-    h+='<div style="display:flex;gap:6px;margin-bottom:6px"><input name="not_documented" class="input" type="text" value="'+escHtml(item)+'"'+fieldAttrs('not_documented.'+i)+' style="flex:1"><button class="btn btn-sm" style="background:var(--amber-dim);color:var(--amber)"'+actionAttrs('remove-item',' data-path="not_documented" data-index="'+i+'"')+'>Dismiss</button></div>';
+    h+='<div style="display:flex;gap:6px;margin-bottom:6px"><input name="not_documented" class="input" type="text" value="'+escAttr(item)+'"'+fieldAttrs('not_documented.'+i)+' style="flex:1"><button class="btn btn-sm" style="background:var(--amber-dim);color:var(--amber)"'+actionAttrs('remove-item',' data-path="not_documented" data-index="'+i+'"')+'>Dismiss</button></div>';
   });
   h+='<button class="btn btn-sm btn-ghost"'+actionAttrs('add-item',' data-path="not_documented"')+'>+ Add item</button>';
 
@@ -1017,19 +1135,17 @@ function renderReviewForm(pid,data){
 async function clearDay(){
   if(isProcessing){showToast('Processing in progress - please wait');return}
   if(!confirm('Clear all recordings and notes? You can re-select facilities after.'))return;
-  for(const[_,rec]of Object.entries(recordings)){if(rec.audioId)try{await deleteBlob(rec.audioId)}catch(e){}}
+  for(const[_,rec]of Object.entries(recordings))await deleteRecordingAudio(rec);
   recordings={};expandedPatient=null;todayPatients=[];todayFacilities=[];selectedFacilities=new Set();
   saveState();saveTodayState();showToast('Day cleared');showView('select');
 }
 
 // ─── WebM to WAV conversion ───
-async function webmToWav(blob){
-  const audioCtx=new (window.AudioContext||window.webkitAudioContext)();
-  const arrayBuf=await blob.arrayBuffer();
-  const audioBuf=await audioCtx.decodeAudioData(arrayBuf);
-  const numChannels=audioBuf.numberOfChannels;
-  const sampleRate=audioBuf.sampleRate;
-  const length=audioBuf.length;
+function audioBuffersToWav(audioBuffers){
+  const first=audioBuffers[0];
+  const numChannels=Math.max(...audioBuffers.map(b=>b.numberOfChannels));
+  const sampleRate=first.sampleRate;
+  const length=audioBuffers.reduce((sum,b)=>sum+b.length,0);
   const wavBuf=new ArrayBuffer(44+length*numChannels*2);
   const view=new DataView(wavBuf);
   // WAV header
@@ -1049,21 +1165,59 @@ async function webmToWav(blob){
   view.setUint32(40,length*numChannels*2,true);
   // Interleave samples
   let offset=44;
-  for(let i=0;i<length;i++){
-    for(let ch=0;ch<numChannels;ch++){
-      let sample=audioBuf.getChannelData(ch)[i];
-      sample=Math.max(-1,Math.min(1,sample));
-      view.setInt16(offset,sample<0?sample*0x8000:sample*0x7FFF,true);
-      offset+=2;
+  for(const audioBuf of audioBuffers){
+    for(let i=0;i<audioBuf.length;i++){
+      for(let ch=0;ch<numChannels;ch++){
+        const channel=Math.min(ch,audioBuf.numberOfChannels-1);
+        let sample=audioBuf.getChannelData(channel)[i];
+        sample=Math.max(-1,Math.min(1,sample));
+        view.setInt16(offset,sample<0?sample*0x8000:sample*0x7FFF,true);
+        offset+=2;
+      }
     }
   }
-  audioCtx.close();
   return new Blob([wavBuf],{type:'audio/wav'});
+}
+
+async function webmToWav(blob){
+  const audioCtx=new (window.AudioContext||window.webkitAudioContext)();
+  const arrayBuf=await blob.arrayBuffer();
+  const audioBuf=await audioCtx.decodeAudioData(arrayBuf);
+  audioCtx.close();
+  return audioBuffersToWav([audioBuf]);
+}
+
+async function webmSegmentsToWav(ids){
+  const audioCtx=new (window.AudioContext||window.webkitAudioContext)();
+  const buffers=[];
+  for(const id of ids){
+    const blob=await loadBlob(id);
+    if(!blob)continue;
+    buffers.push(await audioCtx.decodeAudioData(await blob.arrayBuffer()));
+  }
+  audioCtx.close();
+  if(buffers.length===0)return null;
+  return audioBuffersToWav(buffers);
+}
+
+async function loadRecordingAudio(rec){
+  const ids=recordingAudioIds(rec);
+  if(ids.length===0)return{blob:null,contentType:'audio/webm'};
+  if(ids.length===1)return{blob:await loadBlob(ids[0]),contentType:'audio/webm'};
+  return{blob:await webmSegmentsToWav(ids),contentType:'audio/wav'};
+}
+
+async function recordingToWav(rec){
+  const ids=recordingAudioIds(rec);
+  if(ids.length===0)return null;
+  if(ids.length>1)return webmSegmentsToWav(ids);
+  const blob=await loadBlob(ids[0]);
+  return blob?webmToWav(blob):null;
 }
 
 // ─── Export All Audio ───
 async function exportAllAudio(){
-  const withAudio=Object.entries(recordings).filter(([_,r])=>r.audioId);
+  const withAudio=todayRecordingEntries().filter(([_,r])=>recordingAudioIds(r).length);
   if(withAudio.length===0){showToast('No recordings to export');return;}
   const now=new Date();
   const dateStr=now.getFullYear()+'-'+String(now.getMonth()+1).padStart(2,'0')+'-'+String(now.getDate()).padStart(2,'0');
@@ -1073,9 +1227,8 @@ async function exportAllAudio(){
   let count=0;
   for(const[pid,rec]of withAudio){
     try{
-      const blob=await loadBlob(rec.audioId);
-      if(!blob)continue;
-      const wavBlob=await webmToWav(blob);
+      const wavBlob=await recordingToWav(rec);
+      if(!wavBlob)continue;
       const patient=todayPatients.find(p=>p.id===pid)||allPatients.find(p=>p.id===pid);
       const pName=(patient?.name||'Unknown').replace(/[^a-zA-Z0-9 ]/g,'').replace(/\s+/g,'_');
       const filename=pName+'_'+dateStr+'_'+timeStr+'.wav';
@@ -1106,7 +1259,7 @@ function renderSelect(){
     const sel=selectedFacilities.has(fac);
     const fp=allPatients.filter(p=>p.facility===fac);
     const wt=fp.filter(p=>p.currentTasks).length;
-    return '<div class="fac-select-item'+(sel?' selected':'')+'" data-facility="'+escHtml(fac)+'">'
+    return '<div class="fac-select-item'+(sel?' selected':'')+'" data-facility="'+escAttr(fac)+'">'
       +'<div class="fac-checkbox">'+(sel?'\u2713':'')+'</div>'
       +'<div class="fac-select-info">'
       +'<div class="fac-select-name">'+escHtml(fac||'Unknown')+'</div>'
@@ -1125,12 +1278,14 @@ function renderSelect(){
 }
 
 function renderHome(){
-  const recorded=Object.values(recordings).filter(r=>r.status==='recorded'||r.status==='text-ready').length;
-  const awaitingReview=Object.values(recordings).filter(r=>r.status==='awaiting_review').length;
-  const processed=Object.values(recordings).filter(r=>r.status==='processed').length;
-  const done=Object.values(recordings).filter(r=>r.status==='done').length;
-  const failed=Object.values(recordings).filter(r=>r.status==='error').length;
-  const totalRecs=Object.keys(recordings).length;
+  const todayEntries=todayRecordingEntries();
+  const todayRecords=todayEntries.map(([_,r])=>r);
+  const recorded=todayRecords.filter(r=>r.status==='recorded'||r.status==='text-ready').length;
+  const awaitingReview=todayRecords.filter(r=>r.status==='awaiting_review').length;
+  const processed=todayRecords.filter(r=>r.status==='processed').length;
+  const done=todayRecords.filter(r=>r.status==='done').length;
+  const failed=todayRecords.filter(r=>r.status==='error').length;
+  const totalRecs=todayEntries.length;
   document.getElementById('homePatientCount').textContent=todayPatients.length+' patients';
   let s=todayFacilities.length+' facilities';
   if(totalRecs>0){
@@ -1150,7 +1305,7 @@ function renderHome(){
   const hasReviewable=processed>0||done>0||failed>0||awaitingReview>0;
   document.getElementById('reviewNotesBtn').style.display=hasReviewable?'inline-flex':'none';
   document.getElementById('processedCount').textContent=processed+awaitingReview>0?processed+awaitingReview:(done+failed);
-  const hasAnyAudio=Object.values(recordings).some(r=>r.audioId);
+  const hasAnyAudio=todayRecords.some(r=>recordingAudioIds(r).length);
   document.getElementById('exportAudioBtn').style.display=hasAnyAudio?'inline-flex':'none';
   document.getElementById('clearDayBtn').style.display=totalRecs>0?'inline-flex':'none';
   document.getElementById('facilityList').innerHTML=todayFacilities.map(fac=>{
@@ -1164,7 +1319,7 @@ function renderHome(){
     let prog='';
     if(ft>0){const pG=(fpd/fp.length)*100;const pA=((fpd+fr)/fp.length)*100;
       prog='<div class="progress-track"><div style="height:100%;border-radius:2px;transition:width 0.3s;background:linear-gradient(90deg,var(--green) '+pG+'%,var(--amber) '+pG+'%,var(--amber) '+pA+'%,transparent '+pA+'%);width:100%"></div></div>';}
-    return '<div class="card card-clickable" data-facility="'+escHtml(fac)+'">'
+    return '<div class="card card-clickable" data-facility="'+escAttr(fac)+'">'
       +'<div style="display:flex;justify-content:space-between;align-items:flex-start"><div>'
       +'<div class="fac-name">'+escHtml(fac||'Unknown')+'</div>'
       +'<div class="fac-count">'+fp.length+' patients</div>'
@@ -1215,23 +1370,23 @@ function renderFacility(){
       const modeCtrl='<div style="margin-bottom:10px">'
         +'<div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">'
         +'<span style="font-size:12px;color:var(--text-muted);width:68px">Note type:</span>'
-        +'<button class="btn btn-sm" style="'+(noteType==='scribe'?'background:var(--accent);color:#fff':'background:transparent;border:1px solid var(--border);color:var(--text-muted)')+'" data-action="set-note-type" data-patient-id="'+escHtml(pt.id)+'" data-value="scribe">Scribe</button>'
-        +'<button class="btn btn-sm" style="'+(noteType==='mdcp_731'?'background:var(--accent);color:#fff':'background:transparent;border:1px solid var(--border);color:var(--text-muted)')+'" data-action="set-note-type" data-patient-id="'+escHtml(pt.id)+'" data-value="mdcp_731">MDCP 731</button>'
+        +'<button class="btn btn-sm" style="'+(noteType==='scribe'?'background:var(--accent);color:#fff':'background:transparent;border:1px solid var(--border);color:var(--text-muted)')+'" data-action="set-note-type" data-patient-id="'+escAttr(pt.id)+'" data-value="scribe">Scribe</button>'
+        +'<button class="btn btn-sm" style="'+(noteType==='mdcp_731'?'background:var(--accent);color:#fff':'background:transparent;border:1px solid var(--border);color:var(--text-muted)')+'" data-action="set-note-type" data-patient-id="'+escAttr(pt.id)+'" data-value="mdcp_731">MDCP 731</button>'
         +'</div>'
         +'<div style="display:flex;align-items:center;gap:8px">'
         +'<span style="font-size:12px;color:var(--text-muted);width:68px">Input:</span>'
-        +'<button class="btn btn-sm" style="'+(inputMode==='audio'?'background:var(--accent);color:#fff':'background:transparent;border:1px solid var(--border);color:var(--text-muted)')+'" data-action="set-input-mode" data-patient-id="'+escHtml(pt.id)+'" data-value="audio">Dictate</button>'
-        +'<button class="btn btn-sm" style="'+(inputMode==='text'?'background:var(--accent);color:#fff':'background:transparent;border:1px solid var(--border);color:var(--text-muted)')+'" data-action="set-input-mode" data-patient-id="'+escHtml(pt.id)+'" data-value="text">Type</button>'
+        +'<button class="btn btn-sm" style="'+(inputMode==='audio'?'background:var(--accent);color:#fff':'background:transparent;border:1px solid var(--border);color:var(--text-muted)')+'" data-action="set-input-mode" data-patient-id="'+escAttr(pt.id)+'" data-value="audio">Dictate</button>'
+        +'<button class="btn btn-sm" style="'+(inputMode==='text'?'background:var(--accent);color:#fff':'background:transparent;border:1px solid var(--border);color:var(--text-muted)')+'" data-action="set-input-mode" data-patient-id="'+escAttr(pt.id)+'" data-value="text">Type</button>'
         +'</div>'
         +'</div>';
       let actionArea='';
       if(inputMode==='text'){
         const tv=escHtml(rec?.textInput||'');
         const hasText=!!(rec?.textInput?.trim());
-        actionArea='<textarea name="textInput" class="keyterms-input" placeholder="Paste or type patient narrative here..." data-text-input="1" data-patient-id="'+escHtml(pt.id)+'" style="min-height:120px;width:100%;margin-bottom:8px;resize:vertical">'+tv+'</textarea>';
-        actionArea+='<div class="controls" id="text-ctrl-'+escHtml(pt.id)+'">';
-        if(hasText&&!isProcessing)actionArea+='<button class="btn btn-sm btn-primary btn-process-single" data-action="process-single" data-patient-id="'+escHtml(pt.id)+'">&#9889; Process this</button>';
-        if(rec?.note&&rec.status==='processed')actionArea+='<button class="btn btn-sm btn-copy" data-action="copy-note" data-patient-id="'+escHtml(pt.id)+'">\ud83d\udccb Copy Note</button>';
+        actionArea='<textarea name="textInput" class="keyterms-input" placeholder="Paste or type patient narrative here..." data-text-input="1" data-patient-id="'+escAttr(pt.id)+'" style="min-height:120px;width:100%;margin-bottom:8px;resize:vertical">'+tv+'</textarea>';
+        actionArea+='<div class="controls" id="text-ctrl-'+escAttr(pt.id)+'">';
+        if(hasText&&!isProcessing)actionArea+='<button class="btn btn-sm btn-primary btn-process-single" data-action="process-single" data-patient-id="'+escAttr(pt.id)+'">&#9889; Process this</button>';
+        if(rec?.note&&rec.status==='processed')actionArea+='<button class="btn btn-sm btn-copy" data-action="copy-note" data-patient-id="'+escAttr(pt.id)+'">\ud83d\udccb Copy Note</button>';
         actionArea+='</div>';
       }else{
         let c='';
@@ -1239,19 +1394,19 @@ function renderFacility(){
           const l=rec?.audioId?'Re-record':'Record';
           const st=rec?.audioId?'background:var(--amber-dim);color:var(--amber)':'background:var(--red-dim);color:var(--red)';
           const d=activeRecording&&activeRecording!==pt.id?'disabled':'';
-          c+='<button class="btn btn-sm" style="'+st+'" data-action="start-recording" data-patient-id="'+escHtml(pt.id)+'" '+d+'>\u25cf '+l+'</button>';
-          if(rec?.audioId){
-            c+='<button class="btn btn-sm" style="background:var(--accent-dim);color:var(--accent)" data-action="append-recording" data-patient-id="'+escHtml(pt.id)+'" '+d+'>+ Append</button>';
+          c+='<button class="btn btn-sm" style="'+st+'" data-action="start-recording" data-patient-id="'+escAttr(pt.id)+'" '+d+'>\u25cf '+l+'</button>';
+          if(recordingAudioIds(rec).length){
+            c+='<button class="btn btn-sm" style="background:var(--accent-dim);color:var(--accent)" data-action="append-recording" data-patient-id="'+escAttr(pt.id)+'" '+d+'>+ Append</button>';
           }
         }else{
           c+='<button class="btn btn-sm btn-recording" data-action="stop-recording">\u25a0 Stop ('+fmtTime(recordingTime)+')</button>';
         }
-        if(rec?.audioId&&!isR){
-          c+='<button class="btn btn-sm btn-ghost" data-action="play-audio" data-audio-id="'+escHtml(rec.audioId)+'">'+(playingAudioId===rec.audioId?'\u23f8 Pause':'\u25b6 Play')+'</button>';
-          c+='<button class="btn btn-sm" style="background:var(--red-dim);color:var(--red)" data-action="delete-recording" data-patient-id="'+escHtml(pt.id)+'">\u2715 Delete</button>';
-          if((rec.status==='recorded'||rec.status==='error')&&!isProcessing)c+='<button class="btn btn-sm btn-primary" data-action="process-single" data-patient-id="'+escHtml(pt.id)+'">&#9889; Transcribe this</button>';
+        if(recordingAudioIds(rec).length&&!isR){
+          c+='<button class="btn btn-sm btn-ghost" data-action="play-audio" data-patient-id="'+escAttr(pt.id)+'">'+(playingAudioId===pt.id?'\u23f8 Pause':'\u25b6 Play')+'</button>';
+          c+='<button class="btn btn-sm" style="background:var(--red-dim);color:var(--red)" data-action="delete-recording" data-patient-id="'+escAttr(pt.id)+'">\u2715 Delete</button>';
+          if((rec.status==='recorded'||rec.status==='error')&&!isProcessing)c+='<button class="btn btn-sm btn-primary" data-action="process-single" data-patient-id="'+escAttr(pt.id)+'">&#9889; Transcribe this</button>';
         }
-        if(rec?.note&&rec.status==='processed')c+='<button class="btn btn-sm btn-copy" data-action="copy-note" data-patient-id="'+escHtml(pt.id)+'">\ud83d\udccb Copy Note</button>';
+        if(rec?.note&&rec.status==='processed')c+='<button class="btn btn-sm btn-copy" data-action="copy-note" data-patient-id="'+escAttr(pt.id)+'">\ud83d\udccb Copy Note</button>';
         actionArea='<div class="controls">'+c+'</div>';
       }
       const guide731=noteType==='mdcp_731'?('<details'+(isR?' open':'')+' style="margin-bottom:10px"><summary style="font-size:12px;color:var(--text-muted);cursor:pointer;user-select:none">731 field guide</summary><div style="margin-top:8px;font-size:12px;color:var(--text-muted);line-height:1.6;padding:8px;background:var(--bg);border-radius:6px;border:1px solid var(--border)">'
@@ -1280,14 +1435,14 @@ function renderFacility(){
         +'<div>&bull; <b>Follow up required</b></div>'
         +'</div></details>'):'';
 
-      const noteVal=escHtml(patientNotes[pt.id]||'');
-      const noteField='<div style="margin-top:10px"><input name="patientNote" class="input" type="text" placeholder="Add a note/reminder..." value="'+noteVal+'" data-patient-note="1" data-patient-id="'+escHtml(pt.id)+'" style="font-family:\'IBM Plex Sans\',sans-serif;font-size:12px;padding:6px 10px"></div>';
+      const noteVal=escAttr(patientNotes[pt.id]||'');
+      const noteField='<div style="margin-top:10px"><input name="patientNote" class="input" type="text" placeholder="Add a note/reminder..." value="'+noteVal+'" data-patient-note="1" data-patient-id="'+escAttr(pt.id)+'" style="font-family:\'IBM Plex Sans\',sans-serif;font-size:12px;padding:6px 10px"></div>';
       const tr=rec?.transcript?'<details><summary>Raw transcript</summary><div class="note-block" style="font-size:12px;color:var(--text-muted)">'+escHtml(rec.transcript)+'</div></details>':'';
       const nh=rec?.note?'<div class="note-block">'+escHtml(rec.note)+'</div>':'';
       ex='<div class="sep">'+modeCtrl+guide731+guideScribe+actionArea+noteField+tr+nh+'</div>';
     }
     return '<div class="'+cls+'">'
-      +'<div class="patient-toggle" data-patient-id="'+escHtml(pt.id)+'" style="display:flex;justify-content:space-between;align-items:flex-start;cursor:pointer">'
+      +'<div class="patient-toggle" data-patient-id="'+escAttr(pt.id)+'" style="display:flex;justify-content:space-between;align-items:flex-start;cursor:pointer">'
       +'<div style="flex:1"><div style="display:flex;align-items:center"><span class="patient-name">'+escHtml(pt.name)+'</span>'+bh+'</div>'+th+'</div>'
       +'<div style="display:flex;align-items:center;gap:6px">'+sb+'<span style="color:var(--text-muted);font-size:12px;margin-left:4px">'+(isE?'\u25b2':'\u25bc')+'</span></div>'
       +'</div>'+ex+'</div>';
@@ -1309,7 +1464,7 @@ function renderFacility(){
       if(action==='start-recording')startRecording(pid);
       if(action==='append-recording')startRecording(pid,true);
       if(action==='stop-recording')stopRecording();
-      if(action==='play-audio')playAudio(ctrl.dataset.audioId);
+      if(action==='play-audio')playRecording(pid);
       if(action==='delete-recording')deleteRecording(pid);
       if(action==='process-single')processSingle(pid);
       if(action==='copy-note')await copyNote(pid);
@@ -1359,10 +1514,11 @@ function renderFacility(){
 }
 
 function renderReview(){
-  const awaitingEntries=Object.entries(recordings).filter(([_,r])=>r.status==='awaiting_review');
-  const processedEntries=Object.entries(recordings).filter(([_,r])=>r.status==='processed');
-  const doneEntries=Object.entries(recordings).filter(([_,r])=>r.status==='done');
-  const errorEntries=Object.entries(recordings).filter(([_,r])=>r.status==='error');
+  const entries=todayRecordingEntries();
+  const awaitingEntries=entries.filter(([_,r])=>r.status==='awaiting_review');
+  const processedEntries=entries.filter(([_,r])=>r.status==='processed');
+  const doneEntries=entries.filter(([_,r])=>r.status==='done');
+  const errorEntries=entries.filter(([_,r])=>r.status==='error');
   const pendingNotes=[...processedEntries,...errorEntries];
   const totalReady=processedEntries.length;
   const totalDone=doneEntries.length;
@@ -1398,7 +1554,7 @@ function renderReview(){
         +'<div style="font-size:12px;color:var(--text-muted);margin-top:2px">'+escHtml(fac)+'</div>'
         +srcPreview
         +'</div>'
-        +'<button class="btn btn-sm" style="background:var(--accent-dim);color:var(--accent);white-space:nowrap;margin-left:8px;flex-shrink:0" data-review-action="complete-review" data-facility="'+escHtml(fac)+'" data-patient-id="'+escHtml(pid)+'">Complete Review \u2192</button>'
+        +'<button class="btn btn-sm" style="background:var(--accent-dim);color:var(--accent);white-space:nowrap;margin-left:8px;flex-shrink:0" data-review-action="complete-review" data-facility="'+escAttr(fac)+'" data-patient-id="'+escAttr(pid)+'">Complete Review \u2192</button>'
         +'</div></div>';
     }
     if(pendingNotes.length>0||doneEntries.length>0)html+='<div style="height:8px"></div>';
@@ -1438,7 +1594,9 @@ function renderReview(){
       const cardClass=isErr?' card-recording':isDone?'':' card-processed';
       const btnHtml=isDone
         ?'<span class="badge badge-green">\u2713 Done</span>'
-        :'<button class="btn btn-sm btn-copy" data-review-action="copy-note" data-patient-id="'+escHtml(pid)+'">\ud83d\udccb Copy</button>';
+        :isErr
+          ?'<span class="badge badge-red">\u2717 Error</span>'
+        :'<button class="btn btn-sm btn-copy" data-review-action="copy-note" data-patient-id="'+escAttr(pid)+'">\ud83d\udccb Copy</button>';
       html+='<div class="card'+cardClass+'"'+cardStyle+'>'
         +'<div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:8px">'
         +'<div><div style="display:flex;align-items:center;flex-wrap:wrap"><span class="patient-name">'+escHtml(patient.name)+'</span>'+bh+'</div></div>'
@@ -1508,7 +1666,7 @@ document.addEventListener('keydown',(e)=>{
     e.preventDefault();startRecording(expandedPatient);
   }
   // A = append to existing recording
-  if((e.key==='a'||e.key==='A')&&!activeRecording&&expandedPatient&&recordings[expandedPatient]?.audioId){
+  if((e.key==='a'||e.key==='A')&&!activeRecording&&expandedPatient&&recordingAudioIds(recordings[expandedPatient]).length){
     e.preventDefault();startRecording(expandedPatient,true);
   }
   // S = stop recording
