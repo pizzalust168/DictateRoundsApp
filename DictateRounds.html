@@ -162,7 +162,7 @@
     <div style="font-size:22px;font-weight:700;letter-spacing:-0.5px;margin-bottom:4px" id="facTitle"></div>
     <div class="stat-sub" id="facSummary" style="margin-bottom:12px"></div>
     <div style="position:sticky;top:0;z-index:10;background:var(--bg);padding:8px 0 12px">
-      <input class="input" type="text" placeholder="Search patients..." id="patientSearch" style="font-family:'IBM Plex Sans',sans-serif;font-size:14px">
+      <input class="input" type="text" placeholder="Search patients..." id="patientSearch" style="font-family:'IBM Plex Sans',sans-serif;font-size:14px;background:var(--surface);border-color:rgba(100,116,139,0.5)">
     </div>
     <div id="patientList"></div>
   </div>
@@ -177,6 +177,9 @@
       <div class="stat-label">Processed Notes</div>
       <div class="stat-value" id="reviewCount"></div>
       <div class="stat-sub" id="reviewSummary"></div>
+    </div>
+    <div style="position:sticky;top:0;z-index:10;background:var(--bg);padding:8px 0 12px">
+      <input class="input" type="text" placeholder="Search patients..." id="reviewSearch" style="font-family:'IBM Plex Sans',sans-serif;font-size:14px;background:var(--surface);border-color:rgba(100,116,139,0.5)">
     </div>
     <div id="reviewList"></div>
   </div>
@@ -417,6 +420,7 @@ let playingAudioId = null;
 let previousView = 'home';
 let patientNotes = {}; // pid -> string
 let searchQuery = '';
+let reviewSearchQuery = '';
 
 // ─── IndexedDB ───
 function openDB(){return new Promise((s,f)=>{const r=indexedDB.open('DictateRoundsAudio',1);r.onupgradeneeded=()=>r.result.createObjectStore('blobs');r.onsuccess=()=>s(r.result);r.onerror=()=>f(r.error)})}
@@ -457,7 +461,7 @@ function showView(name){
   if(name==='select')renderSelect();
   if(name==='home'){expandedPatient=null;searchQuery='';renderHome();}
   if(name==='facility')renderFacility();
-  if(name==='review')renderReview();
+  if(name==='review'){reviewSearchQuery='';renderReview();}
   if(name==='settings')renderSettings();
 }
 function goBackFromSettings(){showView(previousView)}
@@ -1250,7 +1254,7 @@ function renderFacility(){
         if(rec?.note&&rec.status==='processed')c+='<button class="btn btn-sm btn-copy" data-action="copy-note" data-patient-id="'+escHtml(pt.id)+'">\ud83d\udccb Copy Note</button>';
         actionArea='<div class="controls">'+c+'</div>';
       }
-      const guide731=noteType==='mdcp_731'?'<details style="margin-bottom:10px"><summary style="font-size:12px;color:var(--text-muted);cursor:pointer;user-select:none">731 field guide</summary><div style="margin-top:8px;font-size:12px;color:var(--text-muted);line-height:1.6;padding:8px;background:var(--bg);border-radius:6px;border:1px solid var(--border)">'
+      const guide731=noteType==='mdcp_731'?('<details'+(isR?' open':'')+' style="margin-bottom:10px"><summary style="font-size:12px;color:var(--text-muted);cursor:pointer;user-select:none">731 field guide</summary><div style="margin-top:8px;font-size:12px;color:var(--text-muted);line-height:1.6;padding:8px;background:var(--bg);border-radius:6px;border:1px solid var(--border)">'
         +'<div style="font-weight:600;margin-bottom:6px;color:var(--text)">Cover these fields:</div>'
         +'<div style="margin-bottom:4px">• <b>Source material</b> reviewed (care plan, progress notes, Allied Health reports)</div>'
         +'<div style="margin-bottom:4px">• <b>Medication chart</b> — reviewed today? any changes?</div>'
@@ -1261,12 +1265,26 @@ function renderFacility(){
         +'<div style="margin-bottom:4px">• <b>Health status</b> summary and active conditions</div>'
         +'<div style="margin-bottom:4px">• <b>Goals of care</b> — per condition: goal, provider actions, monitoring, review date</div>'
         +'<div>• <b>Flag</b> anything uncertain or not documented</div>'
-        +'</div></details>':'';
+        +'</div></details>'):'';
+      const guideScribe=noteType==='scribe'?('<details'+(isR?' open':'')+' style="margin-bottom:10px"><summary style="font-size:12px;color:var(--text-muted);cursor:pointer;user-select:none">Scribe field guide</summary><div style="margin-top:8px;font-size:12px;color:var(--text-muted);line-height:1.6;padding:8px;background:var(--bg);border-radius:6px;border:1px solid var(--border)">'
+        +'<div style="font-weight:600;margin-bottom:4px;color:var(--text)">History</div>'
+        +'<div style="margin-bottom:2px">&bull; <b>Cognitive status:</b> BPSD / acute behaviours, cognition and mood, sleep</div>'
+        +'<div style="margin-bottom:2px">&bull; <b>Physical status:</b> recent infections, mobility and falls, skin integrity, nutritional status, oral intake and weights</div>'
+        +'<div style="margin-bottom:8px">&bull; <b>Comorbid condition status:</b> e.g. CKD, Diabetes</div>'
+        +'<div style="font-weight:600;margin-bottom:4px;color:var(--text)">Examination</div>'
+        +'<div style="margin-bottom:2px">&bull; <b>OBS</b></div>'
+        +'<div style="margin-bottom:8px">&bull; <b>Systems review:</b> CV, Resp, GIT, Neurological, MSK</div>'
+        +'<div style="font-weight:600;margin-bottom:4px;color:var(--text)">Plan</div>'
+        +'<div style="margin-bottom:2px">&bull; <b>Investigations</b></div>'
+        +'<div style="margin-bottom:2px">&bull; <b>Care plan changes</b></div>'
+        +'<div>&bull; <b>Follow up required</b></div>'
+        +'</div></details>'):'';
+
       const noteVal=escHtml(patientNotes[pt.id]||'');
       const noteField='<div style="margin-top:10px"><input name="patientNote" class="input" type="text" placeholder="Add a note/reminder..." value="'+noteVal+'" data-patient-note="1" data-patient-id="'+escHtml(pt.id)+'" style="font-family:\'IBM Plex Sans\',sans-serif;font-size:12px;padding:6px 10px"></div>';
       const tr=rec?.transcript?'<details><summary>Raw transcript</summary><div class="note-block" style="font-size:12px;color:var(--text-muted)">'+escHtml(rec.transcript)+'</div></details>':'';
       const nh=rec?.note?'<div class="note-block">'+escHtml(rec.note)+'</div>':'';
-      ex='<div class="sep">'+modeCtrl+guide731+actionArea+noteField+tr+nh+'</div>';
+      ex='<div class="sep">'+modeCtrl+guide731+guideScribe+actionArea+noteField+tr+nh+'</div>';
     }
     return '<div class="'+cls+'">'
       +'<div class="patient-toggle" data-patient-id="'+escHtml(pt.id)+'" style="display:flex;justify-content:space-between;align-items:flex-start;cursor:pointer">'
@@ -1367,15 +1385,20 @@ function renderReview(){
     for(const[pid,rec]of awaitingEntries){
       const patient=todayPatients.find(p=>p.id===pid)||allPatients.find(p=>p.id===pid);
       if(!patient)continue;
+      if(reviewSearchQuery&&!patient.name.toLowerCase().includes(reviewSearchQuery.toLowerCase()))continue;
       const fac=patient.facility||'Unknown';
       let bh='';
       if(patient.ward)bh+='<span class="patient-bed">'+escHtml(patient.ward)+'</span>';
       if(patient.bed)bh+='<span class="patient-bed">Bed '+escHtml(patient.bed)+'</span>';
+      const srcText=rec.textInput||rec.transcript||'';
+      const srcPreview=srcText?'<div style="font-size:11px;color:var(--text-muted);margin-top:6px;line-height:1.5;white-space:pre-wrap;max-height:48px;overflow:hidden">'+escHtml(srcText.length>130?srcText.slice(0,130)+'\u2026':srcText)+'</div>':'';
       html+='<div class="card">'
-        +'<div style="display:flex;justify-content:space-between;align-items:center">'
-        +'<div><div style="display:flex;align-items:center;flex-wrap:wrap"><span class="patient-name">'+escHtml(patient.name)+'</span>'+bh+'</div>'
-        +'<div style="font-size:12px;color:var(--text-muted);margin-top:2px">'+escHtml(fac)+'</div></div>'
-        +'<button class="btn btn-sm" style="background:var(--accent-dim);color:var(--accent);white-space:nowrap" data-review-action="complete-review" data-facility="'+escHtml(fac)+'" data-patient-id="'+escHtml(pid)+'">Complete Review \u2192</button>'
+        +'<div style="display:flex;justify-content:space-between;align-items:flex-start">'
+        +'<div style="flex:1;min-width:0"><div style="display:flex;align-items:center;flex-wrap:wrap"><span class="patient-name">'+escHtml(patient.name)+'</span>'+bh+'</div>'
+        +'<div style="font-size:12px;color:var(--text-muted);margin-top:2px">'+escHtml(fac)+'</div>'
+        +srcPreview
+        +'</div>'
+        +'<button class="btn btn-sm" style="background:var(--accent-dim);color:var(--accent);white-space:nowrap;margin-left:8px;flex-shrink:0" data-review-action="complete-review" data-facility="'+escHtml(fac)+'" data-patient-id="'+escHtml(pid)+'">Complete Review \u2192</button>'
         +'</div></div>';
     }
     if(pendingNotes.length>0||doneEntries.length>0)html+='<div style="height:8px"></div>';
@@ -1386,6 +1409,7 @@ function renderReview(){
   for(const[pid,rec]of allReviewEntries){
     const patient=todayPatients.find(p=>p.id===pid)||allPatients.find(p=>p.id===pid);
     if(!patient)continue;
+    if(reviewSearchQuery&&!patient.name.toLowerCase().includes(reviewSearchQuery.toLowerCase()))continue;
     const fac=patient.facility||'Unknown';
     if(!facGroups[fac])facGroups[fac]=[];
     facGroups[fac].push([pid,rec,patient]);
@@ -1468,6 +1492,7 @@ function bindStaticControls(){
   document.getElementById('reviewBackBtn').addEventListener('click',()=>showView('home'));
   document.getElementById('settingsBackBtn').addEventListener('click',goBackFromSettings);
   document.getElementById('patientSearch').addEventListener('input',e=>{searchQuery=e.target.value;renderFacility();});
+  document.getElementById('reviewSearch').addEventListener('input',e=>{reviewSearchQuery=e.target.value;renderReview();});
   document.getElementById('deepgramKey').addEventListener('change',e=>localStorage.setItem('dr_deepgramKey',e.target.value));
   document.getElementById('anthropicKey').addEventListener('change',e=>localStorage.setItem('dr_anthropicKey',e.target.value));
   document.getElementById('keytermsInput').addEventListener('change',e=>localStorage.setItem('dr_keyterms',e.target.value));
