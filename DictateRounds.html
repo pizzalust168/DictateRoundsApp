@@ -205,7 +205,11 @@
     </div>
     <div class="settings-box">
       <div class="settings-title">Privacy</div>
-      <div class="settings-desc">Audio recordings are stored locally on your device only. Patient identifiers are never sent to any API. Only de-identified audio transcripts are sent for note structuring. All audio is deleted when you clear the day.</div>
+      <div class="settings-desc">Audio recordings are stored locally until transcription, then audio is sent to Deepgram for speech-to-text. Typed text and de-identified transcripts are sent to Claude for note structuring. Patient names, DOBs and bed details are kept client-side. Local audio is deleted when you clear the day.</div>
+    </div>
+    <div class="settings-box" style="margin-top:16px">
+      <div class="settings-title">Diagnostics</div>
+      <div class="settings-desc" id="diagnosticsInfo" style="white-space:pre-wrap"></div>
     </div>
     <div class="settings-box" style="margin-top:16px">
       <div class="settings-title">Scribe Prompt</div>
@@ -434,6 +438,17 @@ function fmtTime(s){return Math.floor(s/60)+':'+String(Math.floor(s%60)).padStar
 function escHtml(s){const d=document.createElement('div');d.textContent=s;return d.innerHTML}
 function escAttr(s){return String(s??'').replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/'/g,'&#39;').replace(/</g,'&lt;').replace(/>/g,'&gt;')}
 function normaliseKeyPart(s){return String(s||'').trim().toLowerCase().replace(/\s+/g,' ')}
+function normaliseDobValue(value){
+  if(value instanceof Date&&!isNaN(value))return value.toISOString().slice(0,10);
+  if(typeof value==='number'&&isFinite(value)){
+    const parsed=typeof XLSX!=='undefined'&&XLSX.SSF?.parse_date_code?XLSX.SSF.parse_date_code(value):null;
+    if(parsed)return String(parsed.y).padStart(4,'0')+'-'+String(parsed.m).padStart(2,'0')+'-'+String(parsed.d).padStart(2,'0');
+  }
+  const s=String(value||'').trim();
+  const numeric=Number(s);
+  if(s&&isFinite(numeric)&&numeric>20000&&numeric<60000)return normaliseDobValue(numeric);
+  return s.replace(/\s+/g,' ');
+}
 function stableHash(s){
   let h=2166136261;
   for(let i=0;i<s.length;i++)h=Math.imul(h^s.charCodeAt(i),16777619);
@@ -540,7 +555,7 @@ function importFile(file){
         const colA=String(row[0]||'').trim();
         const colB=String(row[1]||'').trim();
         const name=String(row[16]||'').trim();
-        const dob=String(row[17]||'').trim();
+        const dob=normaliseDobValue(row[17]);
         const bed=String(row[18]||'').trim();
         const ct=String(row[14]||'').trim();
         const ft=String(row[15]||'').trim();
@@ -1038,6 +1053,7 @@ function cancelReview(pid){expandedPatient=null;renderFacility();}
 function renderReviewForm(pid,data){
   data=normaliseMdcp731Data(data);
   if(recordings[pid])recordings[pid].structuredData=data;
+  const rec=recordings[pid]||{};
   const pidAttr=escAttr(pid);
   const fieldAttrs=path=>' data-mdcp-field="'+escAttr(path)+'" data-patient-id="'+pidAttr+'"';
   const actionAttrs=(action,extra='')=>' data-mdcp-action="'+action+'" data-patient-id="'+pidAttr+'"'+extra;
@@ -1124,6 +1140,14 @@ function renderReviewForm(pid,data){
   h+='<button class="btn btn-sm btn-ghost"'+actionAttrs('add-item',' data-path="not_documented"')+'>+ Add item</button>';
 
   h+='<div style="margin-top:16px;padding-top:12px;border-top:1px solid var(--border);display:flex;gap:8px;flex-wrap:wrap">';
+  if((rec.inputMode||'audio')==='audio'&&recordingAudioIds(rec).length){
+    if(activeRecording===pid){
+      h+='<button class="btn btn-sm btn-recording"'+actionAttrs('stop-recording')+'>■ Stop ('+fmtTime(recordingTime)+')</button>';
+    }else{
+      const disabled=activeRecording?' disabled':'';
+      h+='<button class="btn btn-sm" style="background:var(--accent-dim);color:var(--accent)"'+actionAttrs('append-recording')+disabled+'>+ Add dictation</button>';
+    }
+  }
   h+='<button class="btn btn-sm btn-ghost"'+actionAttrs('cancel-review')+'>Cancel</button>';
   h+='<button class="btn btn-sm" style="background:var(--accent-dim);color:var(--accent)"'+actionAttrs('reextract')+'>↻ Re-extract from transcript</button>';
   h+='<button class="btn btn-sm btn-primary"'+actionAttrs('generate-final')+'>▶ Generate Final Note</button>';
@@ -1506,6 +1530,8 @@ function renderFacility(){
       if(action==='add-item')addItem731(pid,ctrl.dataset.path,'');
       if(action==='add-goal')addGoal731(pid);
       if(action==='add-action')addAction731(pid,Number(ctrl.dataset.goalIndex));
+      if(action==='append-recording')startRecording(pid,true);
+      if(action==='stop-recording')stopRecording();
       if(action==='cancel-review')cancelReview(pid);
       if(action==='reextract')reExtract731(pid);
       if(action==='generate-final')generateFinalNote(pid);
@@ -1595,7 +1621,7 @@ function renderReview(){
       const btnHtml=isDone
         ?'<span class="badge badge-green">\u2713 Done</span>'
         :isErr
-          ?'<span class="badge badge-red">\u2717 Error</span>'
+          ?'<button class="btn btn-sm" style="background:var(--red-dim);color:var(--red)" data-review-action="retry-note" data-patient-id="'+escAttr(pid)+'">↻ Retry</button>'
         :'<button class="btn btn-sm btn-copy" data-review-action="copy-note" data-patient-id="'+escAttr(pid)+'">\ud83d\udccb Copy</button>';
       html+='<div class="card'+cardClass+'"'+cardStyle+'>'
         +'<div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:8px">'
@@ -1617,14 +1643,36 @@ function renderReview(){
         showView('facility');
       }
       if(action==='copy-note')await copyNote(ctrl.dataset.patientId||'');
+      if(action==='retry-note')await processSingle(ctrl.dataset.patientId||'');
     });
   });
+}
+
+function diagnosticsSummary(){
+  const patientIds=new Set(allPatients.map(p=>p.id));
+  const todayEntries=todayRecordingEntries();
+  const allEntries=Object.entries(recordings);
+  const orphaned=allEntries.filter(([pid])=>!patientIds.has(pid)).length;
+  const audioSegments=allEntries.reduce((sum,[_,r])=>sum+recordingAudioIds(r).length,0);
+  const todayAudio=todayEntries.reduce((sum,[_,r])=>sum+recordingAudioIds(r).length,0);
+  const statuses={};
+  for(const[_,r]of todayEntries)statuses[r.status||'unset']=(statuses[r.status||'unset']||0)+1;
+  const statusText=Object.entries(statuses).map(([k,v])=>k+': '+v).join(', ')||'none';
+  return [
+    'All patients cached: '+allPatients.length,
+    'Today: '+todayPatients.length+' patients across '+todayFacilities.length+' facilities',
+    'Today records: '+todayEntries.length+' ('+statusText+')',
+    'All cached records: '+allEntries.length,
+    'Orphaned records: '+orphaned,
+    'Audio segments: '+todayAudio+' today / '+audioSegments+' total'
+  ].join('\n');
 }
 
 function renderSettings(){
   document.getElementById('deepgramKey').value=localStorage.getItem('dr_deepgramKey')||'';
   document.getElementById('anthropicKey').value=localStorage.getItem('dr_anthropicKey')||'';
   document.getElementById('keytermsInput').value=localStorage.getItem('dr_keyterms')||'';
+  document.getElementById('diagnosticsInfo').textContent=diagnosticsSummary();
   document.getElementById('promptPreview').textContent=SCRIBE_PROMPT.slice(0,600)+'...';
 }
 
